@@ -27,6 +27,7 @@ export function createDebug(enabled) {
       `diff ${info.angle === null ? '-' : num(info.angle - info.baseline)}`,
       `steer ${num(info.steer, 2)}  x ${num(info.playerX, 2)}`,
       `gyro ${info.gyro ? 'on' : 'off'}  rot ${num(info.rotation, 0)}`,
+      `gx ${num(info.gx, 2)}  gy ${num(info.gy, 2)}`,
       `audio ${info.audio ? 'on' : 'off'}`,
       // 場面名は段階7、safe area は段階8、素材の数は段階5で足す
     ];

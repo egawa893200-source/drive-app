@@ -12,7 +12,11 @@ function clamp(v, lo, hi) {
 // 回転の補正はここで一度だけ行う。ほかの場所で重ねて補正しない。
 function steerAngleDeg(g, rotationDeg) {
   const r = rotationDeg * DEG;
-  const sx = g.x * Math.cos(r) + g.y * Math.sin(r);   // 画面の横方向の重力成分
+  // 画面の横方向の重力成分。
+  // DESIGN.md 5.1 の式は g.y の符号が + になっているが、それだと横持ちで左右が
+  // 逆になる(実機で確認)。画面の右方向を端末座標で表すと、角度90のとき -y、
+  // 角度270のとき +y なので、ここは - が正しい。縦持ち(角度0)では変わらない。
+  const sx = g.x * Math.cos(r) - g.y * Math.sin(r);
   const mag = Math.hypot(g.x, g.y, g.z) || 9.8;
   const s = clamp(sx / mag, -1, 1);
   return CFG.STEER_SIGN * Math.asin(s) * 180 / Math.PI;
@@ -181,6 +185,8 @@ export function createInput(target, onTap) {
       angle: hasMotion ? steerAngleDeg(gravity, rotationDeg()) : null,
       baseline,
       rotation: rotationDeg(),
+      gx: hasMotion ? gravity.x : null,
+      gy: hasMotion ? gravity.y : null,
     };
   }
 
