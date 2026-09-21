@@ -3,19 +3,48 @@
 
 const ENGINE = { freq: 55, cutoff: 300, gain: 0.05 };
 const WIND = { center: 800, q: 0.8, maxGain: 0.05 };
-const HORN = { gain: 0.10, cutoff: 1400 };
+// クラクション(DESIGN.md 10章の「2音の短い矩形波」)。
+// 段階4: ローパスを下げすぎて笛のような純音になっていた。クラクションらしさは
+// 倍音のざらつきと、2音のわずかなうなりにあるので、そちらを作り直した。
+const HORN = {
+  gain: 0.06,        // 波形をつぶしたあとの出力。耳に優しい音量に抑える
+  dur: 0.32,
+  minGapMs: 180,
+  detuneCents: 9,    // 同じ音を少しずらして重ね、うなりを出す
+  drive: 12,         // 波形をつぶして金属的なざらつきを出す
+  formant: 1800,     // クラクション特有の鳴りの中心
+  formantQ: 1.1,
+  formantGainDb: 9,
+  cutoff: 3200,      // これより上は耳に刺さるので落とす
+  riseSec: 0.03,     // 鳴り始めに少しだけ音程が上がる(本物の立ち上がり)
+};
 
-// クラクションは3種類からランダム。2音の短い矩形波(DESIGN.md 10章)
+// 本物のクラクションは2音を「同時に」鳴らす。順番に鳴らすと呼び鈴になる。
+// 実際の車のクラクションは長3度に調律されているものが多い
 const HORN_NOTES = [
-  [523, 659],
-  [587, 440],
-  [659, 784],
+  [277, 349],
+  [311, 392],
+  [262, 330],
 ];
+
+// tanh でやわらかくつぶす。角が立ちすぎないディストーション
+function driveCurve(drive) {
+  const n = 1024;
+  const curve = new Float32Array(n);
+  const norm = Math.tanh(drive);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * drive) / norm;
+  }
+  return curve;
+}
 
 export function createAudio() {
   let ctx = null;
   let master = null;
   let windGain = null;
+  let hornBus = null;
+  let lastHornAt = -Infinity;   // 0 にすると、開いた直後の1回目が連打扱いで消える
 
   function buildEngine() {
     const osc = ctx.createOscillator();
@@ -49,6 +78,30 @@ export function createAudio() {
     src.start();
   }
 
+  // 鳴らすたびに作らず、1本を使い回す。
+  // つぶす → 鳴りを強調 → 高いところを落とす、の順に通す
+  function buildHorn() {
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = driveCurve(HORN.drive);
+    shaper.oversample = '4x';
+
+    const formant = ctx.createBiquadFilter();
+    formant.type = 'peaking';
+    formant.frequency.value = HORN.formant;
+    formant.Q.value = HORN.formantQ;
+    formant.gain.value = HORN.formantGainDb;
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = HORN.cutoff;
+
+    const out = ctx.createGain();
+    out.gain.value = HORN.gain;
+
+    shaper.connect(formant).connect(lp).connect(out).connect(master);
+    hornBus = shaper;
+  }
+
   // 起動画面のタップの中から呼ぶ(iOSはユーザー操作の中でしか音を出せない)
   function start() {
     if (ctx) {
@@ -63,6 +116,7 @@ export function createAudio() {
     master.connect(ctx.destination);
     buildEngine();
     buildWind();
+    buildHorn();
     ctx.resume();
   }
 
@@ -73,31 +127,44 @@ export function createAudio() {
     windGain.gain.setTargetAtTime(v, ctx.currentTime, 0.08);
   }
 
-  function beep(freq, at, dur, out) {
-    const t = ctx.currentTime + at;
-    const osc = ctx.createOscillator();
-    osc.type = 'square';
-    osc.frequency.value = freq;
+  // 1音ぶん。同じ音程を少しずらして2本重ね、うなりを作る
+  function hornNote(freq, peak) {
+    const t = ctx.currentTime;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(HORN.gain, t + 0.012);
-    gain.gain.setValueAtTime(HORN.gain, t + dur - 0.04);
-    gain.gain.linearRampToValueAtTime(0, t + dur);
-    osc.connect(gain).connect(out);
-    osc.start(t);
-    osc.stop(t + dur + 0.02);
+    gain.gain.linearRampToValueAtTime(peak, t + 0.008);   // 立ち上がりは速く
+    gain.gain.setValueAtTime(peak, t + HORN.dur - 0.05);
+    gain.gain.linearRampToValueAtTime(0, t + HORN.dur);
+    gain.connect(hornBus);
+
+    const oscs = [];
+    for (const cents of [-HORN.detuneCents, HORN.detuneCents]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.detune.value = cents;
+      osc.frequency.setValueAtTime(freq * 0.96, t);
+      osc.frequency.linearRampToValueAtTime(freq, t + HORN.riseSec);
+      osc.connect(gain);
+      osc.start(t);
+      osc.stop(t + HORN.dur + 0.02);
+      oscs.push(osc);
+    }
+    oscs[oscs.length - 1].onended = () => {
+      for (const osc of oscs) osc.disconnect();
+      gain.disconnect();
+    };
   }
 
   function horn() {
     if (!ctx) return;
-    // 矩形波のままだと耳に刺さるので、角を落としてから出す
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = HORN.cutoff;
-    lp.connect(master);
+    // 連打されても音が積み重ならないようにする。重なると割れて変な音になる
+    const now = performance.now();
+    if (now - lastHornAt < HORN.minGapMs) return;
+    lastHornAt = now;
     const [a, b] = HORN_NOTES[Math.floor(Math.random() * HORN_NOTES.length)];
-    beep(a, 0, 0.14, lp);
-    beep(b, 0.13, 0.20, lp);
+    // つぶす前の段階では振幅を大きめに入れる。ここでの差が音色のざらつきになる
+    hornNote(a, 0.5);
+    hornNote(b, 0.38);
   }
 
   return {

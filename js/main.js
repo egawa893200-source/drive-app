@@ -1,10 +1,12 @@
 // 起動とメインループ(DESIGN.md 11章)。
-// 段階3では START → PLAY まで。一時停止・復帰と wake lock は段階8。
+// 段階5では START → PLAY まで。一時停止・復帰と wake lock は段階8。
 import { CFG } from './config.js';
 import { createRoad } from './road.js';
 import { createPlayer, drawCar } from './player.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
+import { createAssets } from './assets.js';
+import { createScenery } from './scenery.js';
 import { createDebug } from './debug.js';
 
 const START = 'start';
@@ -16,6 +18,8 @@ const startEl = document.getElementById('start');
 const startButton = document.getElementById('startButton');
 
 const road = createRoad();
+const assets = createAssets();
+const scenery = createScenery(assets, road);
 const player = createPlayer();
 const audio = createAudio();
 const input = createInput(canvas, () => {
@@ -78,8 +82,12 @@ function frame(now) {
     player.update(dt, steer, xLimit);
     audio.setWind(Math.abs(steer));
 
+    const lastPosition = position;
     position = (position + CFG.SPEED.normal * dt) % road.length;
-    const carLine = road.render(ctx, W, H, position);
+    scenery.update(dt, position, lastPosition);
+
+    scenery.drawBackground(ctx, W, H);
+    const carLine = road.render(ctx, W, H, position, assets.draw);
     player.draw(ctx, W, H, carLine);
   }
 
@@ -90,6 +98,8 @@ function frame(now) {
       steer,
       playerX: player.x,
       audio: audio.ready,
+      scene: scenery.sceneId,
+      assets: assets.stats(),
     });
     debug.draw(ctx, W, H);
   }
