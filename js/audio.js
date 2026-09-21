@@ -3,29 +3,30 @@
 
 const ENGINE = { freq: 55, cutoff: 300, gain: 0.05 };
 const WIND = { center: 800, q: 0.8, maxGain: 0.05 };
-// クラクション。DESIGN.md 10章は「2音の短い矩形波」だが、10章の表は
-// 「作り方の目安」なので、本物らしさを優先して次のように作り直した。
-//
-// 段階4の反省: 矩形波に WaveShaper(tanh)をかけてもほとんど何も起きない。
-// 矩形波はもともと振幅が上下一定なので、つぶす余地がないため。結果として
-// ざらつきが出ず、きれいな2音の和音のままだった。
-// 本物のクラクションは (1)倍音が偶数次まで密に詰まっている (2)1〜3kHz に
-// 金属の共鳴がある (3)振動板のバリバリした雑音が混ざる、の3つでできている。
+// クラクション。タップすると、遠くのホンクが自然な間隔で2〜3回鳴る。
+// DESIGN.md 10章は「2音の短い矩形波」だが、同章の表は「作り方の目安」。
+// 近くで鳴らすと耳に刺さるので、距離感のある音にしている。
+// 中身は (1)柔らかい立ち上がり (2)空気で高音が減った遠さ
+// (3)街の反射(残響) (4)広すぎないステレオ の4つ。
 const HORN = {
-  gain: 0.045,
-  dur: 0.36,
-  minGapMs: 180,
-  detuneCents: 12,     // 2本重ねてうなりを出す
-  drive: 6,            // ノコギリ波なのでつぶすと倍音が増える
-  lowpass: 5200,       // 本物は4kHz超まで出ている。落としすぎると笛になる
-  riseSec: 0.035,      // 鳴り始めに音程がわずかに上がる
-  // 金属の共鳴。この2つが「クラクションらしさ」の大半
-  formants: [
-    { freq: 1200, q: 1.0, gain: 8 },
-    { freq: 2600, q: 1.2, gain: 10 },
-  ],
-  // 振動板のバリバリ。鳴り始めにだけ混ぜる
-  noise: { gain: 0.35, center: 2600, q: 0.9, dur: 0.12 },
+  // 遠さのローパスで高音を落とすぶん、音の力が大きく減る。
+  // ここを 0.05 にするとエンジン音に埋もれて聞こえなかった
+  gain: 0.18,
+  wet: 0.5,                   // 残響の混ぜ具合
+  minGapMs: 300,
+  honks: [2, 3],              // 1回のタップで鳴る数
+  gapSec: [0.30, 0.75],       // ホンクどうしの間隔
+  durSec: [0.28, 0.50],       // 1回の長さ
+  attack: 0.05,               // 柔らかい立ち上がり(近い音ほど立ち上がりが速い)
+  release: 0.14,
+  detuneCents: 12,            // 2本重ねてうなりを出す
+  drive: 3,
+  distanceLowpass: 2200,      // 遠いと空気で高音が減る
+  pan: 0.35,                  // 広すぎないステレオ
+  level: [0.55, 1.0],         // 遠さのばらつき
+  pitchJitter: 0.08,          // 車ごとの個体差
+  // correlation を上げるほど左右が似て、ステレオが狭くなる
+  reverb: { sec: 1.1, decay: 0.28, dark: 0.28, correlation: 0.75 },
 };
 
 // 実際の車のクラクションは長3度に調律されているものが多い
@@ -34,6 +35,10 @@ const HORN_NOTES = [
   [277, 349],
   [311, 392],
 ];
+
+function between(a, b) {
+  return a + Math.random() * (b - a);
+}
 
 // 衝突と回避(DESIGN.md 10章)。どちらもやわらかい音にする
 const CRASH = { gain: 0.10, from: 600, to: 300, fall: 0.2, tail: 0.3 };
@@ -90,31 +95,54 @@ export function createAudio() {
     src.start();
   }
 
+  // 街の反射。減衰する雑音を畳み込んで残響にする
+  function buildReverb() {
+    const len = Math.floor(ctx.sampleRate * HORN.reverb.sec);
+    const buffer = ctx.createBuffer(2, len, ctx.sampleRate);
+    const c = HORN.reverb.correlation;
+    // 左右で完全に別の雑音にするとステレオが広がりすぎる。
+    // 共通のぶんを多めにして、広すぎないようにする
+    let shared = 0;
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+    let sl = 0;
+    let sr = 0;
+    for (let i = 0; i < len; i++) {
+      shared += ((Math.random() * 2 - 1) - shared) * HORN.reverb.dark;
+      sl += ((Math.random() * 2 - 1) - sl) * HORN.reverb.dark;
+      sr += ((Math.random() * 2 - 1) - sr) * HORN.reverb.dark;
+      const decay = Math.exp(-(i / ctx.sampleRate) / HORN.reverb.decay);
+      left[i] = (shared * c + sl * (1 - c)) * decay;
+      right[i] = (shared * c + sr * (1 - c)) * decay;
+    }
+    const conv = ctx.createConvolver();
+    conv.buffer = buffer;
+    return conv;
+  }
+
   // 鳴らすたびに作らず、1本を使い回す。
-  // つぶす → 金属の共鳴を持ち上げる → 高いところを落とす、の順に通す
+  // つぶす → 遠さのローパス → 素の音と残響を混ぜる
   function buildHorn() {
     const shaper = ctx.createWaveShaper();
     shaper.curve = driveCurve(HORN.drive);
     shaper.oversample = '4x';
 
-    let node = shaper;
-    for (const f of HORN.formants) {
-      const peak = ctx.createBiquadFilter();
-      peak.type = 'peaking';
-      peak.frequency.value = f.freq;
-      peak.Q.value = f.q;
-      peak.gain.value = f.gain;
-      node = node.connect(peak);
-    }
-
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = HORN.lowpass;
+    lp.frequency.value = HORN.distanceLowpass;
+
+    const dry = ctx.createGain();
+    dry.gain.value = 1 - HORN.wet;
+    const wet = ctx.createGain();
+    wet.gain.value = HORN.wet;
 
     const out = ctx.createGain();
     out.gain.value = HORN.gain;
 
-    node.connect(lp).connect(out).connect(master);
+    shaper.connect(lp);
+    lp.connect(dry).connect(out);
+    lp.connect(buildReverb()).connect(wet).connect(out);
+    out.connect(master);
     hornBus = shaper;
   }
 
@@ -143,68 +171,74 @@ export function createAudio() {
     windGain.gain.setTargetAtTime(v, ctx.currentTime, 0.08);
   }
 
-  // 1音ぶん。ノコギリ波を少しずらして2本重ね、うなりを作る。
-  // 矩形波(奇数倍音だけ)より倍音が密になり、金属の鳴りに近づく
-  function hornNote(freq, peak) {
-    const t = ctx.currentTime;
+  // 1音ぶん。ノコギリ波を少しずらして2本重ね、うなりを作る
+  function hornVoice(freq, peak, t, dur, out) {
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(peak, t + 0.006);   // 立ち上がりは速く
-    gain.gain.setValueAtTime(peak, t + HORN.dur - 0.05);
-    gain.gain.linearRampToValueAtTime(0, t + HORN.dur);
-    gain.connect(hornBus);
+    gain.gain.linearRampToValueAtTime(peak, t + HORN.attack);
+    gain.gain.setValueAtTime(peak, t + dur - HORN.release);
+    gain.gain.linearRampToValueAtTime(0, t + dur);
+    gain.connect(out);
 
     const oscs = [];
     for (const cents of [-HORN.detuneCents, HORN.detuneCents]) {
       const osc = ctx.createOscillator();
       osc.type = 'sawtooth';
       osc.detune.value = cents;
-      osc.frequency.setValueAtTime(freq * 0.96, t);
-      osc.frequency.linearRampToValueAtTime(freq, t + HORN.riseSec);
+      osc.frequency.value = freq;
       osc.connect(gain);
       osc.start(t);
-      osc.stop(t + HORN.dur + 0.02);
+      osc.stop(t + dur + 0.02);
       oscs.push(osc);
     }
-    oscs[oscs.length - 1].onended = () => {
-      for (const osc of oscs) osc.disconnect();
-      gain.disconnect();
-    };
+    return { oscs, gain };
   }
 
-  // 振動板のバリバリした雑音。鳴り始めにだけ混ぜる
-  function hornNoise() {
-    const t = ctx.currentTime;
-    const len = Math.floor(ctx.sampleRate * HORN.noise.dur);
-    const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  // ホンク1回ぶん。車ごとに音程・遠さ・左右が少しずつ違う
+  function honk(at) {
+    const t = ctx.currentTime + at;
+    const [a, b] = HORN_NOTES[Math.floor(Math.random() * HORN_NOTES.length)];
+    const jitter = 1 + (Math.random() * 2 - 1) * HORN.pitchJitter;
+    const level = between(HORN.level[0], HORN.level[1]);
+    const dur = between(HORN.durSec[0], HORN.durSec[1]);
 
-    const src = ctx.createBufferSource();
-    src.buffer = buffer;
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = HORN.noise.center;
-    bp.Q.value = HORN.noise.q;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(HORN.noise.gain, t);
-    gain.gain.linearRampToValueAtTime(0, t + HORN.noise.dur);
-    src.connect(bp).connect(gain).connect(hornBus);
-    src.start(t);
-    src.onended = () => { src.disconnect(); bp.disconnect(); gain.disconnect(); };
+    let out;
+    if (ctx.createStereoPanner) {
+      out = ctx.createStereoPanner();
+      out.pan.value = (Math.random() * 2 - 1) * HORN.pan;
+    } else {
+      out = ctx.createGain();
+    }
+    out.connect(hornBus);
+
+    const voices = [
+      hornVoice(a * jitter, 0.5 * level, t, dur, out),
+      hornVoice(b * jitter, 0.38 * level, t, dur, out),
+    ];
+    const last = voices[1].oscs[voices[1].oscs.length - 1];
+    last.onended = () => {
+      for (const v of voices) {
+        for (const osc of v.oscs) osc.disconnect();
+        v.gain.disconnect();
+      }
+      out.disconnect();
+    };
   }
 
   function horn() {
     if (!ctx) return;
-    // 連打されても音が積み重ならないようにする。重なると割れて変な音になる
+    // 連打されても音が積み重なりすぎないようにする
     const now = performance.now();
     if (now - lastHornAt < HORN.minGapMs) return;
     lastHornAt = now;
-    const [a, b] = HORN_NOTES[Math.floor(Math.random() * HORN_NOTES.length)];
-    // つぶす前の段階では振幅を大きめに入れる。ここでの差が音色のざらつきになる
-    hornNote(a, 0.5);
-    hornNote(b, 0.38);
-    hornNoise();
+
+    const n = HORN.honks[0]
+      + Math.floor(Math.random() * (HORN.honks[1] - HORN.honks[0] + 1));
+    let at = 0;
+    for (let i = 0; i < n; i++) {
+      honk(at);
+      at += between(HORN.gapSec[0], HORN.gapSec[1]);
+    }
   }
 
   // 衝突: サイン波が 600Hz -> 300Hz に下がる(DESIGN.md 10章)
