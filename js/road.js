@@ -7,15 +7,17 @@ const DEG = Math.PI / 180;
 // カメラの奥行き(DESIGN.md 7.2)
 const CAMERA_DEPTH = 1 / Math.tan((CFG.FOV_DEG / 2) * DEG);
 
-// 段階5で scenery.js の場面テーブルに移す。今は「朝の草原」の色だけ持つ
+// 路面の色。空と地面と場面ごとの色は scenery.js が持つ
 const COLORS = {
-  SKY_TOP: '#7EC8F0',
-  SKY_BOTTOM: '#CDEBFA',
   GRASS: '#7BC96F',
   ROAD_LIGHT: '#7C8089',
   ROAD_DARK: '#72767F',
   CENTER_LINE: '#F2F2EC',
 };
+
+// 道ばたの物を描く距離。全区間ぶん描くとスプライトが40個を超えるため
+// (DESIGN.md 16章)。これより奥の物は1px未満なので見た目は変わらない
+const ITEM_DRAW_DISTANCE = 120;
 
 // 道の形。curve は曲がり具合(+が右、DESIGN.md 7.1 により ±2 まで)、
 // hill はその区間で持ち上げる高さ。丘は区間の始めと終わりで必ず 0 に戻すので、
@@ -71,6 +73,8 @@ function buildSegments() {
       const t2 = (i + 1) / sec.n;
       segments.push({
         index,
+        items: [],          // 道ばたの物(scenery.js が入れる)
+        clip: 0,            // 手前の丘で隠れる高さ
         curve: sec.curve * curveEnvelope(t1),
         p1: { world: { y: hillAt(sec.hill, t1), z: index * SEG }, camera: {}, screen: {} },
         p2: { world: { y: hillAt(sec.hill, t2), z: (index + 1) * SEG }, camera: {}, screen: {} },
@@ -105,9 +109,6 @@ export function createRoad() {
   const segments = buildSegments();
   const length = segments.length * SEG;
 
-  let skyGradient = null;
-  let skyHeight = -1;
-
   function segmentAt(z) {
     return segments[Math.floor(z / SEG) % segments.length];
   }
@@ -117,19 +118,6 @@ export function createRoad() {
     const seg = segmentAt(z);
     const t = (z % SEG) / SEG;
     return seg.p1.world.y + (seg.p2.world.y - seg.p1.world.y) * t;
-  }
-
-  function drawSky(ctx, W, H) {
-    if (skyHeight !== H) {
-      skyGradient = ctx.createLinearGradient(0, 0, 0, H * CFG.HORIZON_RATIO);
-      skyGradient.addColorStop(0, COLORS.SKY_TOP);
-      skyGradient.addColorStop(1, COLORS.SKY_BOTTOM);
-      skyHeight = H;
-    }
-    ctx.fillStyle = skyGradient;
-    ctx.fillRect(0, 0, W, Math.ceil(H * CFG.HORIZON_RATIO));
-    ctx.fillStyle = COLORS.GRASS;
-    ctx.fillRect(0, Math.ceil(H * CFG.HORIZON_RATIO), W, H);
   }
 
   function drawSegment(ctx, W, seg, dark) {
@@ -161,6 +149,30 @@ export function createRoad() {
     }
   }
 
+  // 区間に紐づいた物を、その区間の投影に合わせて描く。
+  // 画像の下端中央を接地点にする(DESIGN.md 13.2)
+  function drawSprite(ctx, W, H, seg, item, drawItem) {
+    const p = seg.p1.screen;
+    const w = item.size * p.w;
+    if (w < 1) return;
+    const h = w * item.aspect;
+    const x = p.x + item.x * p.w - w / 2;
+    const y = p.y - h;
+    if (x > W || x + w < 0 || y > H) return;
+
+    // 手前の丘の裏に入る部分は描かない
+    if (seg.clip < H) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, W, seg.clip);
+      ctx.clip();
+      drawItem(ctx, item.name, x, y, w, h);
+      ctx.restore();
+      return;
+    }
+    drawItem(ctx, item.name, x, y, w, h);
+  }
+
   // 平坦な直線での、自車の高さにおける道幅の半分(画素)。
   // カーブや丘で毎フレーム変わらない値なので、自車の可動範囲を決めるのに使う
   function carLineHalfWidth(W) {
@@ -171,9 +183,7 @@ export function createRoad() {
   // 自車の高さでの道の中心と幅。描画のたびに更新する(DESIGN.md 7.3)
   const carLine = { x: 0, w: 0 };
 
-  function render(ctx, W, H, position) {
-    drawSky(ctx, W, H);
-
+  function render(ctx, W, H, position, drawItem) {
     const base = segmentAt(position);
     const basePercent = (position % SEG) / SEG;
     const cameraY = CFG.CAMERA_HEIGHT + roadYAt(position);
@@ -199,6 +209,7 @@ export function createRoad() {
 
       x += dx;
       dx += seg.curve;
+      seg.clip = maxY;
 
       // 自車の高さをまたぐ、いちばん手前の区間から道の中心と幅を取る
       if (!carLineFound && seg.p1.screen.y >= carY && seg.p2.screen.y <= carY) {
@@ -217,8 +228,31 @@ export function createRoad() {
       maxY = seg.p2.screen.y;
     }
 
+    // 道ばたの物は奥から手前の順に描く(画家のアルゴリズム、DESIGN.md 7.2)
+    if (drawItem) {
+      for (let n = Math.min(ITEM_DRAW_DISTANCE, CFG.DRAW_DISTANCE) - 1; n >= 0; n--) {
+        const seg = segments[(base.index + n) % segments.length];
+        if (!seg.items.length) continue;
+        if (seg.p1.camera.z <= CAMERA_DEPTH) continue;
+        for (const item of seg.items) drawSprite(ctx, W, H, seg, item, drawItem);
+      }
+    }
+
     return carLine;
   }
 
-  return { length, render, carLineHalfWidth };
+  // 道ばたの物を置く。place(index) が item の配列(または null)を返す
+  function placeItems(place) {
+    for (const seg of segments) {
+      const items = place(seg.index);
+      seg.items = items || [];
+    }
+  }
+
+  // その地点のカーブ量。遠景の横ずれに使う(DESIGN.md 8.2)
+  function curveAt(z) {
+    return segmentAt(z).curve;
+  }
+
+  return { length, render, carLineHalfWidth, placeItems, curveAt };
 }
