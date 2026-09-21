@@ -1,0 +1,562 @@
+#!/usr/bin/env python3
+"""GPT素材生成ループ: プロンプト表示、取り込み(透過・切り出し・WebP化)、保存、進捗管理。"""
+import argparse
+import datetime
+import json
+import shutil
+import sys
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageDraw
+from scipy import ndimage
+
+SKILL_DIR = Path(__file__).resolve().parent.parent
+REPO_DEFAULT = SKILL_DIR.parent.parent.parent
+MANIFEST = SKILL_DIR / "assets.json"
+CONFIG = SKILL_DIR / "config.json"
+STATUS = SKILL_DIR / "status.json"
+IMG_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+ROAD_GRAY = (124, 128, 137)
+ICON_BG = (126, 200, 240)
+ICON_SIZES = (180, 192, 512)
+MAGENTA = np.array([255.0, 0.0, 255.0])
+
+
+# ---------- 共通 ----------
+
+def die(msg):
+    print(f"ERROR: {msg}")
+    sys.exit(1)
+
+
+def read_json(p):
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def write_json(p, data):
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_config():
+    """config.json は任意。無ければリポジトリ内の inbox/ を使う初期設定で動く。"""
+    c = read_json(CONFIG) if CONFIG.exists() else {}
+
+    def resolve(v):
+        p = Path(v).expanduser()
+        return p if p.is_absolute() else (REPO_DEFAULT / p).resolve()
+
+    c["repo_dir"] = resolve(c.get("repo_dir", "."))
+    c["inbox_dir"] = resolve(c.get("inbox_dir", "inbox"))
+    c["drive_dir"] = resolve(c["drive_dir"]) if c.get("drive_dir") else None
+    c["src_dir"] = c["repo_dir"] / "assets-src"
+    c["preview_dir"] = c["src_dir"] / "preview"
+    c.setdefault("webp_quality", 88)
+    c.setdefault("character", "丸い耳の小さな動物(特定の動物キャラに似せないオリジナル)")
+    return c
+
+
+def natural_key(p):
+    import re
+    return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", p.name)]
+
+
+def load_manifest():
+    return read_json(MANIFEST)
+
+
+def load_status(m):
+    s = read_json(STATUS) if STATUS.exists() else {}
+    for sh in m["sheets"]:
+        s.setdefault(sh["id"], {"state": "pending", "attempts": 0})
+    return s
+
+
+def find_sheet(m, sid):
+    for sh in m["sheets"]:
+        if sh["id"] == sid:
+            return sh
+    die(f"シート {sid} がありません。status で一覧を確認してください。")
+
+
+def next_pending(m, s):
+    """まだ取り込んでいない(未着手・作り直し)最初の素材。"""
+    for sh in m["sheets"]:
+        if s[sh["id"]]["state"] in ("pending", "retry"):
+            return sh
+    return None
+
+
+def group_title(m, gid):
+    for g in m.get("groups", []):
+        if g["id"] == gid:
+            return g["title"]
+    return gid
+
+
+# ---------- プロンプト ----------
+
+def build_prompt(m, sh, c):
+    def fill(t):
+        return t.replace("{character}", c["character"])
+
+    parts = []
+    if sh["type"] != "reference":
+        parts.append(m["anchor"])
+    parts.append(fill(sh["prompt"]))
+    n = len(sh["items"])
+    if n == 1:
+        if sh["type"] != "icon":
+            parts.append("物体をひとつだけ画像の中央に大きく配置し、周囲に十分な余白をとる。")
+    else:
+        rows = "、".join(f"{i + 1}行目に{k}個" for i, k in enumerate(sh["layout"]))
+        parts.append(
+            f"次の{n}個を、{rows}並べる。物体どうし、画像の端とは十分な間隔をあけ、"
+            "重ねたり接したりしない。左上から右へ、次の行へ、の順に:"
+        )
+        parts += [f"{i + 1}. {fill(it['desc'])}" for i, it in enumerate(sh["items"])]
+    parts.append(f"画像の形は{sh['size']}。")
+    parts.append(m["style"])
+    parts.append(m["palette"])
+    if sh["type"] != "icon":
+        parts.append(m["background"])
+    return "\n".join(parts)
+
+
+# ---------- 画像処理 ----------
+
+def cutout(img):
+    """背景を透明にしたRGBA配列と処理方法を返す。失敗時は (None, 理由)。"""
+    rgba = np.array(img.convert("RGBA"))
+    h, w = rgba.shape[:2]
+    k = max(4, min(h, w) // 64)
+    corners = np.concatenate(
+        [rgba[:k, :k], rgba[:k, -k:], rgba[-k:, :k], rgba[-k:, -k:]]
+    ).reshape(-1, 4)
+    if (corners[:, 3] < 20).mean() > 0.9:
+        return rgba, "transparent"
+    rgb = corners[:, :3].astype(int)
+    is_mag = (rgb[:, 0] > 180) & (rgb[:, 1] < 90) & (rgb[:, 2] > 180)
+    if is_mag.mean() > 0.8:
+        return key_magenta(rgba), "magenta"
+    try:
+        from rembg import remove  # 任意
+        out = np.array(remove(Image.fromarray(rgba)).convert("RGBA"))
+        return out, "rembg"
+    except ImportError:
+        return None, "opaque"
+
+
+def key_magenta(rgba):
+    """マゼンタ背景を抜き、ふちの色をマゼンタから分離する。"""
+    a = rgba.astype(np.float32)
+    rgb = a[..., :3]
+    # マゼンタらしさ(rとbが高くgが低いほど大きい)
+    m = np.minimum(rgb[..., 0], rgb[..., 2]) - rgb[..., 1]
+    # 確実に物体の内側の画素
+    core = ndimage.binary_erosion(m < 20, iterations=2)
+    if not core.any():
+        core = m < 20
+    # 境界の画素ごとに、いちばん近い内側の色を物体の色とみなす
+    dist, (iy, ix) = ndimage.distance_transform_edt(~core, return_indices=True)
+    fg = rgb[iy, ix]
+    diff = fg - MAGENTA
+    denom = np.maximum((diff * diff).sum(-1), 1.0)
+    # 画素 = α*物体色 + (1-α)*マゼンタ を α について解く
+    alpha = np.clip(((rgb - MAGENTA) * diff).sum(-1) / denom, 0.0, 1.0)
+    alpha[core] = 1.0
+    alpha[dist > 6] = 0.0
+    out = np.empty_like(a)
+    out[..., :3] = np.where(core[..., None], rgb, fg)
+    out[..., 3] = alpha * a[..., 3]
+    return out.astype(np.uint8)
+
+
+def bbox_gap(p, q):
+    dx = max(0, max(p["x0"], q["x0"]) - min(p["x1"], q["x1"]))
+    dy = max(0, max(p["y0"], q["y0"]) - min(p["y1"], q["y1"]))
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def merge(p, q):
+    return {
+        "labs": p["labs"] + q["labs"],
+        "x0": min(p["x0"], q["x0"]), "x1": max(p["x1"], q["x1"]),
+        "y0": min(p["y0"], q["y0"]), "y1": max(p["y1"], q["y1"]),
+    }
+
+
+def trim(crop):
+    ys, xs = np.nonzero(crop[..., 3] > 8)
+    if len(xs) == 0:
+        return crop
+    return crop[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+
+
+def split_items(rgba, layout):
+    """物のかたまりを layout(各行の個数)の順に切り出す。"""
+    h, w = rgba.shape[:2]
+    mask = rgba[..., 3] > 40
+    total = int(mask.sum())
+    if total == 0:
+        return None, "物体が見つかりません", []
+    grow = max(2, int(min(h, w) * 0.015))
+    labels, n = ndimage.label(ndimage.binary_dilation(mask, iterations=grow))
+    sizes = ndimage.sum(mask, labels, range(1, n + 1))
+    comps = []
+    for i, sz in enumerate(sizes):
+        if sz < total * 0.01:
+            continue
+        ys, xs = np.nonzero(labels == i + 1)
+        comps.append({"labs": [i + 1], "x0": xs.min(), "x1": xs.max(), "y0": ys.min(), "y1": ys.max()})
+
+    expected = sum(layout)
+    warns = []
+    merged = 0
+    while len(comps) > expected:
+        best = None
+        for i in range(len(comps)):
+            for j in range(i + 1, len(comps)):
+                d = bbox_gap(comps[i], comps[j])
+                if best is None or d < best[0]:
+                    best = (d, i, j)
+        _, i, j = best
+        comps[i] = merge(comps[i], comps[j])
+        del comps[j]
+        merged += 1
+    if merged:
+        warns.append(f"離れた部品を{merged}回まとめました。プレビューで組み合わせが正しいか確認してください")
+    if len(comps) < expected:
+        return None, f"物体が{len(comps)}個しか見つかりません(期待 {expected}個)。くっついている可能性があります", warns
+
+    comps.sort(key=lambda c: (c["y0"] + c["y1"]) / 2)
+    ordered, idx = [], 0
+    for k in layout:
+        row = sorted(comps[idx:idx + k], key=lambda c: (c["x0"] + c["x1"]) / 2)
+        ordered += row
+        idx += k
+
+    crops = []
+    for c in ordered:
+        sl = (slice(c["y0"], c["y1"] + 1), slice(c["x0"], c["x1"] + 1))
+        crop = rgba[sl].copy()
+        sel = np.isin(labels[sl], c["labs"])
+        crop[..., 3] = np.where(sel, crop[..., 3], 0)
+        crops.append(trim(crop))
+    return crops, None, warns
+
+
+def finalize(crop, target):
+    """余白を足し、長辺を target にそろえる。拡大したら True を返す。"""
+    im = Image.fromarray(crop, "RGBA")
+    w, h = im.size
+    pad = int(max(w, h) * 0.04)
+    canvas = Image.new("RGBA", (w + 2 * pad, h + 2 * pad), (0, 0, 0, 0))
+    canvas.paste(im, (pad, pad))
+    W, H = canvas.size
+    s = target / max(W, H)
+    size = (max(1, round(W * s)), max(1, round(H * s)))
+    out = canvas.convert("RGBa").resize(size, Image.LANCZOS).convert("RGBA")
+    return out, s > 1.6
+
+
+def has_halo(img):
+    a = np.array(img)
+    edge = (a[..., 3] > 10) & (a[..., 3] < 245)
+    if edge.sum() < 50:
+        return False
+    px = a[edge][:, :3].astype(int)
+    pink = (px[:, 0] > 170) & (px[:, 2] > 170) & (px[:, 1] < 110)
+    return pink.mean() > 0.05
+
+
+def save_both(img, rel, c, fmt, **kw):
+    bases = [c["repo_dir"]] + ([c["drive_dir"]] if c["drive_dir"] else [])
+    for base in bases:
+        p = base / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        img.save(p, fmt, **kw)
+
+
+# ---------- プレビュー ----------
+
+def checker(w, h, sz=16):
+    yy, xx = np.mgrid[0:h, 0:w]
+    arr = np.full((h, w, 3), 235, np.uint8)
+    arr[((yy // sz + xx // sz) % 2) == 0] = 200
+    return Image.fromarray(arr, "RGB").convert("RGBA")
+
+
+def make_preview(pairs, out, per_row=3):
+    cell, gap, label = 220, 8, 18
+    unit_w, unit_h = cell * 2 + gap, cell + label
+    cols = min(per_row, len(pairs))
+    rows = (len(pairs) + per_row - 1) // per_row
+    W = gap + cols * (unit_w + gap * 2)
+    H = gap + rows * (unit_h + gap * 2)
+    sheet = Image.new("RGBA", (W, H), (255, 255, 255, 255))
+    d = ImageDraw.Draw(sheet)
+    for i, (name, img) in enumerate(pairs):
+        r, ci = divmod(i, per_row)
+        x = gap + ci * (unit_w + gap * 2)
+        y = gap + r * (unit_h + gap * 2)
+        d.text((x, y), name, fill=(0, 0, 0, 255))
+        th = img.copy()
+        th.thumbnail((cell - 8, cell - 8), Image.LANCZOS)
+        backs = (checker(cell, cell), Image.new("RGBA", (cell, cell), ROAD_GRAY + (255,)))
+        for j, bg in enumerate(backs):
+            tile = bg.copy()
+            tile.alpha_composite(th, ((cell - th.width) // 2, (cell - th.height) // 2))
+            sheet.alpha_composite(tile, (x + j * (cell + gap), y + label))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sheet.convert("RGB").save(out)
+    return out
+
+
+# ---------- コマンド ----------
+
+def cmd_status(_):
+    m = load_manifest()
+    s = load_status(m)
+    done = sum(1 for sh in m["sheets"] if s[sh["id"]]["state"] == "done")
+    print(f"進捗: {done} / {len(m['sheets'])} 点完了\n")
+    labels = {"pending": "未着手", "review": "確認待ち", "retry": "作り直し", "done": "完了"}
+    current = None
+    for sh in m["sheets"]:
+        if sh["group"] != current:
+            current = sh["group"]
+            print(f"■ {group_title(m, current)}(グループ {current})")
+        st = s[sh["id"]]
+        print(f"    [{labels.get(st['state'], st['state'])}] {sh['id']:<18}(取り込み{st['attempts']}回)")
+    nxt = next_pending(m, s)
+    print("\n次: " + (f"{nxt['id']}({nxt['title']})" if nxt else "なし(全素材を取り込み済み)"))
+
+
+def cmd_prompt(args):
+    c = load_config()
+    m = load_manifest()
+    sh = find_sheet(m, args.sheet)
+    print(f"===== {sh['id']}: {sh['title']} =====")
+    print(build_prompt(m, sh, c))
+    print("=====")
+
+
+def inbox_files(c):
+    """inbox の画像をファイル名の順(IMG_0012 < IMG_0103 のような自然順)に返す。
+    git で取得したファイルは更新日時が当てにならないため、名前で並べる。"""
+    inbox = c["inbox_dir"]
+    if not inbox.exists():
+        die(f"inbox フォルダがありません: {inbox}(git pull を忘れていないか確認)")
+    files = [p for p in inbox.iterdir() if p.is_file() and p.suffix.lower() in IMG_EXT]
+    if not files:
+        die("inbox に画像がありません。GitHubにアップロードしたら git pull してから実行してください。")
+    return sorted(files, key=natural_key)
+
+
+def sheet_for_file(src, m, s):
+    """ファイル名が素材ID(例: frog.png)ならその素材。違えば未着手の最初の素材。"""
+    ids = {sh["id"]: sh for sh in m["sheets"]}
+    return ids.get(src.stem.lower()) or next_pending(m, s)
+
+
+def archive(src, c, sh):
+    """元画像を残す場所を決めて inbox から取り除く。
+    基準の車だけはリポジトリに残す(別チャットで添付し直すため)。
+    ほかはリポジトリを重くしないよう、ドライブ設定があるときだけ残す。"""
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    raw = None
+    if sh["type"] == "reference":
+        d = c["src_dir"] / "raw"
+        d.mkdir(parents=True, exist_ok=True)
+        raw = d / f"{sh['id']}{src.suffix.lower()}"
+        shutil.copy2(src, raw)
+    elif c["drive_dir"]:
+        d = c["drive_dir"] / "raw"
+        d.mkdir(parents=True, exist_ok=True)
+        raw = d / f"{sh['id']}_{ts}{src.suffix.lower()}"
+        shutil.copy2(src, raw)
+    src.unlink()
+    return raw
+
+
+def cmd_ingest(args):
+    c = load_config()
+    m = load_manifest()
+    s = load_status(m)
+    files = inbox_files(c)
+    if args.all:
+        for src in files:
+            sh = sheet_for_file(src, m, s)
+            if sh is None:
+                print(f"WARN: 未着手の素材がもうありません。{src.name} は取り込みませんでした")
+                break
+            process_one(src, sh, c, m, s)
+            print()
+        return
+    if len(files) > 1:
+        die(f"inbox に画像が{len(files)}枚あります。1枚にするか、保存順に続けて取り込むなら --all を付けてください。")
+    sh = find_sheet(m, args.sheet) if args.sheet else sheet_for_file(files[0], m, s)
+    if sh is None:
+        print("全素材の取り込みが済んでいます。")
+        return
+    process_one(files[0], sh, c, m, s)
+
+
+def process_one(src, sh, c, m, s):
+    img = Image.open(src)
+    img.load()
+    st = s[sh["id"]]
+    st["attempts"] += 1
+    name = src.name
+    raw = archive(src, c, sh)
+    st["raw"] = str(raw) if raw else None
+    print(f"素材: {sh['id']}({sh['title']}) 取り込み{st['attempts']}回目")
+    print(f"元画像: {name} ({img.width}x{img.height})")
+
+    if sh["type"] == "icon":
+        rgba = img.convert("RGBA")
+        if np.array(rgba)[..., 3].min() < 250:
+            print("WARN: アイコンに透明な部分がありました。水色で塗りつぶしています")
+        bg = Image.new("RGBA", rgba.size, ICON_BG + (255,))
+        flat = Image.alpha_composite(bg, rgba).convert("RGB")
+        side = min(flat.size)
+        left, top = (flat.width - side) // 2, (flat.height - side) // 2
+        flat = flat.crop((left, top, left + side, top + side))
+        for size in ICON_SIZES:
+            rel = Path("assets/icons") / f"icon-{size}.png"
+            save_both(flat.resize((size, size), Image.LANCZOS), rel, c, "PNG")
+            print(f"  OK {rel.as_posix()}")
+        prev = make_preview([("icon", flat.convert("RGBA"))], c["preview_dir"] / f"{sh['id']}.png")
+        st["state"] = "review"
+        write_json(STATUS, s)
+        print(f"プレビュー: {prev.relative_to(c['repo_dir'])}")
+        return
+
+    rgba, method = cutout(img)
+    if rgba is None:
+        st["state"] = "retry"
+        write_json(STATUS, s)
+        print("NG: 背景が透明でもマゼンタでもありません。追記「背景が透明でない」で作り直してください。")
+        print("    (pip install rembg を入れると、自動の背景除去も試せます)")
+        return
+    print(f"背景処理: {method}")
+
+    crops, err, warns = split_items(rgba, [len(sh["items"])])
+    if err:
+        st["state"] = "retry"
+        write_json(STATUS, s)
+        print(f"NG: {err}")
+        print("    追記「余計な物が描かれた」で作り直してください。")
+        return
+
+    pairs = []
+    for item, crop in zip(sh["items"], crops):
+        out, upscaled = finalize(crop, item["target"])
+        rel = Path("assets/img") / item["dir"] / f"{item['name']}.webp"
+        save_both(out, rel, c, "WEBP", quality=c["webp_quality"], method=6)
+        pairs.append((item["name"], out))
+        print(f"  OK {item['name']:<18} -> {rel.as_posix()} ({out.width}x{out.height})")
+        if upscaled:
+            warns.append(f"{item['name']} は元が小さく、拡大しています(ぼやける可能性)")
+        if has_halo(out):
+            warns.append(f"{item['name']} のふちにピンクのにじみがあります")
+    for w in warns:
+        print(f"WARN: {w}")
+    prev = make_preview(pairs, c["preview_dir"] / f"{sh['id']}.png")
+    st["state"] = "review"
+    write_json(STATUS, s)
+    print(f"プレビュー: {prev.relative_to(c['repo_dir'])}")
+
+
+def cmd_approve(args):
+    """素材ID、またはグループID(そのグループの確認待ちをまとめて)を完了にする。"""
+    c = load_config()
+    m = load_manifest()
+    s = load_status(m)
+    targets = [sh for sh in m["sheets"] if sh["group"] == args.sheet and s[sh["id"]]["state"] == "review"]
+    if not targets:
+        sh = find_sheet(m, args.sheet)
+        if s[sh["id"]]["state"] != "review":
+            die(f"{sh['id']} は確認待ちではありません(現在: {s[sh['id']]['state']})。先に ingest してください。")
+        targets = [sh]
+    for sh in targets:
+        st = s[sh["id"]]
+        st["state"] = "done"
+        if sh["type"] == "reference" and st.get("raw"):
+            dirs = [c["src_dir"] / "reference"] + ([c["drive_dir"] / "reference"] if c["drive_dir"] else [])
+            for d in dirs:
+                d.mkdir(parents=True, exist_ok=True)
+                Image.open(st["raw"]).save(d / "style_reference.png")
+            print(f"基準画像を保存しました: {(c['src_dir'] / 'reference' / 'style_reference.png').relative_to(c['repo_dir'])}")
+        print(f"{sh['id']} を完了にしました。")
+    write_json(STATUS, s)
+    nxt = next_pending(m, s)
+    print("次: " + (f"{nxt['id']}({nxt['title']})" if nxt else "なし(全素材を取り込み済み)"))
+
+
+def cmd_reset(args):
+    m = load_manifest()
+    s = load_status(m)
+    sh = find_sheet(m, args.sheet)
+    s[sh["id"]]["state"] = "pending"
+    write_json(STATUS, s)
+    print(f"{sh['id']} を未着手に戻しました。")
+
+
+def expected_files(m):
+    for sh in m["sheets"]:
+        if sh["type"] == "icon":
+            for size in ICON_SIZES:
+                yield sh["id"], Path("assets/icons") / f"icon-{size}.png"
+        else:
+            for it in sh["items"]:
+                yield sh["id"], Path("assets/img") / it["dir"] / f"{it['name']}.webp"
+
+
+def cmd_check(_):
+    c = load_config()
+    m = load_manifest()
+    missing = [(sid, rel) for sid, rel in expected_files(m) if not (c["repo_dir"] / rel).exists()]
+    total = sum(1 for _ in expected_files(m))
+    print(f"素材: {total - len(missing)} / {total}")
+    for sid, rel in missing:
+        print(f"  不足: {rel.as_posix()}(シート {sid})")
+    if not missing:
+        print("すべて揃っています。")
+
+
+def cmd_preview_all(args):
+    c = load_config()
+    m = load_manifest()
+    keep = {sh["id"] for sh in m["sheets"] if not args.group or sh["group"] == args.group}
+    pairs = []
+    for sid, rel in expected_files(m):
+        if sid not in keep:
+            continue
+        p = c["repo_dir"] / rel
+        if p.exists() and p.suffix == ".webp":
+            pairs.append((p.stem, Image.open(p).convert("RGBA")))
+    if not pairs:
+        die("まだ素材がありません。")
+    name = f"group_{args.group}.png" if args.group else "all.png"
+    out = make_preview(pairs, c["preview_dir"] / name, per_row=4)
+    print(f"一覧: {out.relative_to(c['repo_dir'])}({len(pairs)}点)")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="GPT素材生成ループ")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("status").set_defaults(fn=cmd_status)
+    p = sub.add_parser("prompt"); p.add_argument("sheet"); p.set_defaults(fn=cmd_prompt)
+    p = sub.add_parser("ingest"); p.add_argument("--sheet"); p.add_argument("--all", action="store_true")
+    p.set_defaults(fn=cmd_ingest)
+    p = sub.add_parser("approve"); p.add_argument("sheet"); p.set_defaults(fn=cmd_approve)
+    p = sub.add_parser("reset"); p.add_argument("sheet"); p.set_defaults(fn=cmd_reset)
+    sub.add_parser("check").set_defaults(fn=cmd_check)
+    p = sub.add_parser("preview-all"); p.add_argument("--group"); p.set_defaults(fn=cmd_preview_all)
+    args = ap.parse_args()
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

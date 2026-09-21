@@ -1,0 +1,4 @@
+# ビルドはファイルのコピーだけ。素材の元画像やスキルは公開しない
+[build]
+  command = "mkdir -p dist && cp -r index.html style.css manifest.webmanifest sw.js js assets dist/"
+  publish = "dist"

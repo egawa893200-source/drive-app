@@ -1,0 +1,422 @@
+# 1歳半向けドライブアプリ 実装設計書
+
+この文書が実装の正本です。Claude Code はこの文書だけを読んで実装できるように書かれています。
+
+## 0. Claude Code への作業ルール
+
+- 実装は「17. 開発段階」の段階単位で行う。指示された段階だけを作り、次の段階には手を出さない
+- 各段階の終わりに、合格条件を1つずつ確認して報告する。実機でしか確認できない項目は「実機確認待ち」と明記する
+- 調整値はすべて `js/config.js` の `CFG` に集める。コード中に数値を直書きしない
+- `CFG` の値を変えたら、変えた理由を報告に書く
+- 画像素材がなくても全段階が動くこと。素材が無いときは図形のプレースホルダーを描く(13章)
+- 「18. やってはいけないこと」を守る
+- 作業はクラウド上のClaude Code(iPhoneから操作)で行う。変更は作業ブランチにコミットしてプッシュし、段階ごとにプルリクエストを作る
+- 動作確認はNetlifyのデプロイプレビュー(プルリクエストごとに発行されるURL)をiPhoneのSafariで開いて行う。報告にはそのURLで何を確かめればよいかを書く
+
+---
+
+## 1. 概要と原則
+
+スマホを傾けるだけで道を走り続けられる、1歳半向けの運転ごっこアプリ。ゲームではなく体験。
+
+| 原則 | 実装上の意味 |
+| --- | --- |
+| ゲームオーバーを作らない | 衝突しても止めない。スコア・残機・タイマー表示なし |
+| 説明をいらなくする | 子どもが触る画面に文字を出さない |
+| 触れば必ず反応する | 傾き・タップのどちらにも0.1秒以内に反応を返す |
+| 失敗を楽しくする | 衝突は「ポーンと跳ねる」可愛い演出 |
+| 目と耳に優しくする | 点滅なし、カメラの揺れなし、音量は控えめ |
+
+保護者が横で見ている前提。起動画面と設定画面だけは大人が操作する。
+
+## 2. 対象環境
+
+| 項目 | 内容 |
+| --- | --- |
+| 基準端末 | iPhone 12(iOS Safari、画面 2532×1170、DPR 3、60Hz) |
+| 起動方法 | ホーム画面に追加したPWAとして全画面起動 |
+| 開発の進め方 | GitHubのリポジトリ + クラウドのClaude Code(iPhoneのClaudeアプリから操作) |
+| 動作確認 | Netlifyのデプロイプレビューを iPhone 12 のSafariで開く(HTTPSなのでジャイロも試せる) |
+| 描画 | Canvas 2D。DPRは最大2に制限(負荷対策) |
+| 言語 | 素のJavaScript、ES Modules。ビルドなし、依存ライブラリなし |
+| 公開 | Netlify。GitHubと連携し、`main` が本番、プルリクエストがデプロイプレビュー。設定は `netlify.toml` |
+| 手元の確認 | 必要ならクラウド上で `npx serve .` を使ってよいが、最終確認は必ずデプロイプレビューで行う |
+
+## 3. ディレクトリ構成
+
+```
+/
+├── index.html
+├── style.css
+├── manifest.webmanifest
+├── sw.js                   Service Worker
+├── DESIGN.md               この文書
+├── CLAUDE.md
+├── netlify.toml            公開するファイルだけを dist/ にコピーして配信
+├── inbox/                  素材の受け渡し用(ユーザーがGitHubにアップロード)
+├── assets-src/             基準画像とプレビュー(公開しない)
+├── js/
+│   ├── main.js             起動、状態遷移、メインループ
+│   ├── config.js           CFG(全調整値)
+│   ├── input.js            ジャイロ、タッチ、キーボード、キャリブレーション
+│   ├── orientation.js      画面の向き、canvas回転、safe area
+│   ├── road.js             擬似3Dの道路とスプライト投影
+│   ├── scenery.js          空、遠景、道ばたの物、場面切り替え
+│   ├── obstacles.js        障害物の生成、当たり判定、演出
+│   ├── player.js           自車の位置、ロール、跳ね
+│   ├── assets.js           画像の読み込みとプレースホルダー
+│   ├── audio.js            BGM、効果音(Web Audio APIで生成)
+│   ├── settings.js         大人向け設定と保存
+│   ├── ending.js           おわりの演出
+│   └── debug.js            デバッグ表示
+├── assets/
+│   ├── img/                GPTで生成した素材(WebP)
+│   └── icons/              アプリアイコン(PNG)
+└── .claude/skills/gpt-asset-loop/   素材生成スキル
+```
+
+## 4. 座標系と調整値
+
+**道路座標**: 自車と障害物の左右位置は `x ∈ [-1, 1]`(-1が道の左端、+1が右端)で持つ。画面座標には描画時だけ変換する。カーブで道が曲がっても、自車は道路座標で動くので遠心力は働かない。
+
+**奥行き**: ワールド単位 `z`。自車は毎秒 `CFG.SPEED` だけ進む。
+
+`js/config.js` の初期値:
+
+```js
+export const CFG = {
+  // 道路
+  ROAD_HALF_WIDTH: 2000,
+  SEGMENT_LENGTH: 200,
+  DRAW_DISTANCE: 200,          // 描く区間数
+  CAMERA_HEIGHT: 1000,
+  FOV_DEG: 100,
+  HORIZON_RATIO: 0.45,         // 地平線の画面上の位置(上からの比率)
+  RUMBLE_SEGMENTS: 3,          // 路面の縞1本あたりの区間数
+  SPEED: { slow: 2400, normal: 3600 },   // ワールド単位/秒
+
+  // 自車
+  CAR_SCREEN_Y_RATIO: 0.80,    // 自車の下端の画面上の位置
+  CAR_WIDTH_RATIO: 0.18,       // 自車の幅(画面の短辺比)
+  CAR_HITBOX_HALF: 0.18,       // 道路座標での当たり判定の半幅
+  CAR_X_LIMIT: 0.8,            // 自車が動ける範囲
+  ROLL_MAX_DEG: 8,
+
+  // 操作
+  STEER_RANGE_DEG: 25,
+  STEER_DEADZONE_DEG: 4,
+  STEER_SIGN: 1,               // 実機で逆に動いたら -1
+  STEER_SENSITIVITY: { low: 0.7, mid: 1.0, high: 1.4 },
+  LATERAL_SPEED: 1.2,          // 道路座標/秒(道幅の60%/秒)
+  FOLLOW_TAU: 0.2,             // 追従の時定数(秒)
+  GRAVITY_LPF_TAU: 0.08,       // 加速度センサーの平滑化(秒)
+  TOUCH_RAMP_TAU: 0.15,
+
+  // 障害物
+  OBSTACLE_INTERVAL: [8, 12],  // 秒
+  OBSTACLE_LEAD_TIME: 4,       // 出現してから自車に届くまで(秒)
+  OBSTACLE_X: 0.28,            // 置く位置(±)。中央の車と少しだけ重なる
+  OBSTACLE_HITBOX_HALF: 0.15,  // 見た目の70%
+  OBSTACLE_FADE_IN: 0.5,
+
+  // 場面
+  SCENE_DURATION: 60,
+  SCENE_BLEND: 30,
+
+  // 時間処理
+  MAX_DT: 0.05,
+  MAX_DPR: 2,
+
+  // おわり
+  END_MINUTES_OPTIONS: [5, 10, 0],  // 0 = なし
+  END_SUNSET_SEC: 30,
+};
+```
+
+すべての動きは秒単位で定義し、`dt`(前フレームからの経過秒、`MAX_DT` で上限)を掛ける。指数追従は `v += (target - v) * (1 - Math.exp(-dt / tau))` で書く。
+
+## 5. 入力(input.js)
+
+### 5.1 傾きの計算
+
+`deviceorientation` の `beta` / `gamma` は使わない。持ち方で意味が変わり、端末が水平に近づくと値が暴れるため。
+
+`devicemotion` の `accelerationIncludingGravity` から重力ベクトルを取り、画面の横方向の成分から傾き角を求める。この方式は、立てて持つ・膝に寝かせる・その中間、どの持ち方でも同じ操作感になる。
+
+```js
+// g: 平滑化済みの重力ベクトル {x, y, z}(端末座標)
+// rotationDeg: orientation.js が返す「画面の向き + canvasの回転」の合計(0/90/180/270)
+function steerAngleDeg(g, rotationDeg) {
+  const r = rotationDeg * Math.PI / 180;
+  const sx = g.x * Math.cos(r) + g.y * Math.sin(r);   // 画面の横方向の重力成分
+  const mag = Math.hypot(g.x, g.y, g.z) || 9.8;
+  const s = Math.max(-1, Math.min(1, sx / mag));
+  return CFG.STEER_SIGN * Math.asin(s) * 180 / Math.PI;
+}
+```
+
+**重要**: 回転の補正はこの関数の中で一度だけ行う。`rotationDeg` には端末の向き(`screen.orientation.angle`、無ければ `window.orientation`)と、canvasをCSSで回転させている角度(6章)の合計を渡す。別の場所で重ねて補正しない。
+
+iOSとAndroidで加速度の符号が逆になる場合があるため、左右の向きは段階3で実機確認し、逆なら `STEER_SIGN` を反転する。
+
+### 5.2 傾きから操作量へ
+
+1. 重力ベクトルを `GRAVITY_LPF_TAU` で平滑化
+2. `angle = steerAngleDeg(g, rot) - baseline`(`baseline` はキャリブレーション時の角度)
+3. `|angle| < STEER_DEADZONE_DEG` なら0。それ以外はデッドゾーン分を差し引いて `STEER_RANGE_DEG` で割り、感度を掛けて `[-1, 1]` にクランプ → `steer`
+4. 自車の目標位置 `targetX = steer * CAR_X_LIMIT`
+5. 自車の位置は `FOLLOW_TAU` で目標に追従。ただし1秒あたりの移動量は `LATERAL_SPEED` を超えない
+
+### 5.3 キャリブレーション
+
+`baseline` を取り直せるのは、起動画面の「はじめる」を押したときと、設定画面の「傾きをリセット」だけ。遊んでいる最中に基準を変えるジェスチャーは作らない(子どもが手のひらを置いて誤発動するため)。
+
+### 5.4 タッチとキーボード
+
+- 画面の左半分を押している間は `steer` の目標を -1、右半分なら +1。`TOUCH_RAMP_TAU` でなめらかに変化させる
+- タッチ操作はジャイロと常に併用可能(両方あれば足してクランプ)
+- タップ(押してすぐ離す、200ms未満)はクラクションを鳴らす
+- PCでの開発用に ← → キーでも操作できる
+- canvasを回転させているときは、タッチ座標も論理座標に変換してから左右を判定する(orientation.js の変換関数を使う)
+
+### 5.5 許可
+
+iOSでは「はじめる」ボタンのタップ処理の中で `DeviceMotionEvent.requestPermission()` を呼ぶ。存在しない環境では呼ばずにそのまま進む。拒否されたらタッチ操作だけで遊べる状態で開始する。許可ダイアログは子どもには押せないので、起動画面は大人が操作する前提。
+
+## 6. 画面・向き・safe area(orientation.js)
+
+- iOS Safariは画面の向きを固定できない。`innerHeight > innerWidth`(縦向き)のときは、ステージ要素をCSSで `rotate(90deg)` して横画面として描き、`canvasRot = 90` とする。横向きなら `canvasRot = 0`
+- 回転方向が逆に感じたら `-90deg` / `-90` に揃えて変える(段階8で実機確認)
+- 論理画面サイズ `W, H` は常に横長(`W > H`)
+- `toLogical(clientX, clientY)` でタッチ座標を論理座標に変換する関数を提供する
+- safe area は `env(safe-area-inset-*)` をCSS変数経由で読む。iPhone 12の横向きではノッチ側に約47ptの余白が出る。論理座標での左右の余白 `insetL, insetR` を求め、自車の画面上の左右端がその内側に収まるように `CAR_X_LIMIT` を実効的に狭める
+- 下端(ホームバー付近)には操作要素を置かない
+- `resize` / `orientationchange` でサイズと回転を計算し直す
+- canvasのピクセルサイズは `W * min(devicePixelRatio, MAX_DPR)`
+
+画面の縦方向の構成:
+
+| 領域 | 位置(上から) | 中身 |
+| --- | --- | --- |
+| 空 | 0〜35% | 2色グラデーション、空の物(雲・気球・かもめ・月・星) |
+| 遠景 | 35〜45% | 山・島・街並みのシルエット |
+| 道路と地面 | 45%〜 | 擬似3Dの道路、道ばたの物、障害物、自車 |
+
+## 7. 擬似3Dの道路(road.js)
+
+### 7.1 区間データ
+
+道は `SEGMENT_LENGTH` ごとの区間の配列(ループ)。各区間は `curve`(曲がり具合)と `y`(高さ)を持つ。起動時に、まっすぐ・ゆるい右カーブ・ゆるい左カーブ・ゆるい丘を組み合わせて約2000区間を生成する。カーブの `curve` は ±2 程度までのゆるいものだけにする。
+
+### 7.2 投影
+
+```
+cameraDepth = 1 / tan(FOV_DEG / 2)
+scale   = cameraDepth / (z - cameraZ)
+screenX = W/2 + scale * (x - cameraX) * W/2
+screenY = H * HORIZON_RATIO + scale * (cameraY - y) * H/2
+screenW = scale * ROAD_HALF_WIDTH * W/2
+```
+
+- 奥から手前に向かってカーブ量を累積し(`dx += curve`、`x += dx`)、道を曲げる
+- 手前から奥へ描きながら、すでに描いた高さより上にある区間は描かない(丘の裏を隠す)
+- 路面は `RUMBLE_SEGMENTS` ごとに濃淡2色の縞。センターラインは破線。路肩は草地色
+- 道ばたの物・障害物は区間に紐づけ、描画は奥から手前の順にまとめて行う(画家のアルゴリズム)
+
+### 7.3 自車
+
+- 自車は画面の `CAR_SCREEN_Y_RATIO` の位置に固定表示。前後には動かない
+- 画面上の横位置は、その高さでの道の中心と幅から `playerX` を変換して求める
+- 移動量に応じて最大 `ROLL_MAX_DEG` だけ回転(canvasの `rotate`)
+- 衝突時は0.3秒で上に少し跳ねて戻る
+- 車の色は設定で選んだ `car_red` / `car_blue` / `car_yellow` / `car_white`
+
+## 8. 風景(scenery.js)
+
+### 8.1 場面
+
+4つの場面を順に繰り返す。1場面 `SCENE_DURATION` 秒、切り替えの `SCENE_BLEND` 秒で空と地面の色をなめらかに混ぜる。道ばたの物の出現候補は、切り替えの中間点で新しい場面のものに替える(すでに出ている物はそのまま流れていく)。
+
+| 場面 | 空(上 / 下) | 草地 | 道ばたの物 | 空の物 | 遠景 |
+| --- | --- | --- | --- | --- | --- |
+| 朝の草原 | `#7EC8F0` / `#CDEBFA` | `#7BC96F` | 木・茂み・花・牛・風車・納屋 | 雲・気球 | 緑の山 |
+| 昼の海沿い | `#4FA8E8` / `#BFE4FA` | `#8FD17F` | ヤシ・灯台・木・茂み | 雲・かもめ | 島・ヨット |
+| 夕方の街 | `#F29E6B` / `#FAD7A0` | `#9CC27A` | ビル・家・信号・木 | 雲 | 街並み |
+| 夜の山道 | `#1E2A5A` / `#3C4F8C` | `#3F6B4A` | 針葉樹・街灯・フクロウ | 月・星(図形で描く、またたかせない) | 夜の山 |
+
+### 8.2 視差
+
+| 層 | 動き |
+| --- | --- |
+| 空 | 固定。空の物だけゆっくり横に漂う |
+| 遠景 | 道のカーブ量に応じて横にずれる(係数0.02)+ ごくゆっくり横に流れる |
+| 道ばたの物 | 擬似3D投影(7章)。3〜5区間ごとに左右どちらかに配置、道路座標 `x = ±(1.3〜2.5)` |
+| 路面の縞・白線 | 擬似3D投影 |
+
+遠景は1枚の横長画像を流さず、山や街並みを1つずつの画像として横に並べる(継ぎ目の問題を避けるため)。画面幅の3倍の帯に配置して、はみ出た物を反対側に戻す。
+
+## 9. 障害物(obstacles.js)
+
+| 項目 | 値 |
+| --- | --- |
+| 出現間隔 | `OBSTACLE_INTERVAL` 秒のランダム |
+| 同時に出る数 | 最大1個 |
+| 出現位置 | 自車の `SPEED * OBSTACLE_LEAD_TIME` 先 |
+| 左右位置 | `+OBSTACLE_X` か `-OBSTACLE_X`。前回と同じ側が2回続いたら反対側 |
+| 出現時 | `OBSTACLE_FADE_IN` 秒で不透明に |
+| 当たり判定 | 奥行きが自車の区間と重なり、かつ `|obsX - playerX| < CAR_HITBOX_HALF + OBSTACLE_HITBOX_HALF` |
+
+初期値では、自車が中央にいると軽く当たり、少し傾ければ避けられる。完全に避けられる配置にすると傾ける動機がなくなるため。
+
+種類: `puddle`(水たまり)、`leaves`(落ち葉)、`frog`(カエル)、`ball`(ボール)、`ducks`(アヒルの親子)、`turtle`(カメ)。
+
+**当たったとき**: 速度は落とさない。障害物は放物線を描いて上に跳ねて消える(0.6秒)。自車が小さく跳ねる。やわらかい効果音。暗転・赤い点滅・振動はしない。記録もしない。
+
+**避けたとき**(自車の横を通過した瞬間): 障害物の近くに小さな星形のきらきら(図形、5〜8個、0.5秒)と、上昇音。
+
+設定で「障害物なし」にしたら生成を止める。初期値は「あり」。
+
+## 10. 演出と音(audio.js)
+
+音はすべてWeb Audio APIで生成する。音源ファイルは使わない。`AudioContext` は起動画面のタップで作成・`resume()` する。
+
+| 音 | 作り方の目安 |
+| --- | --- |
+| エンジン | 低い持続音(ノコギリ波55Hz → ローパス300Hz、音量0.05)。車速は一定なので音程は変えない |
+| 風切り | ノイズ → バンドパス。音量を `|steer|` に比例 |
+| クラクション | 2音の短い矩形波。3種類からランダム |
+| 衝突 | サイン波が600Hz→300Hzに0.2秒で下がる |
+| 回避 | 三角波で上昇する3音のアルペジオ |
+| BGM | 場面ごとに1つ。ペンタトニックの短いアルペジオを90BPMでループ、音量0.04 |
+
+設定で音量オフ(全体のゲインを0)。iOSでは消音スイッチが効かない場合があるため、この設定は必須。
+
+## 11. 状態遷移(main.js)
+
+```
+BOOT → START → PLAY ⇄ PAUSED
+                 ↓
+               ENDING → SLEEP
+ (PLAY / SLEEP から) SETTINGS をオーバーレイで開閉
+```
+
+| 状態 | 内容 |
+| --- | --- |
+| START | 画面いっぱいの車の絵と「はじめる」(大人向けなので文字あり)。タップで許可要求・音の有効化・キャリブレーション・wake lock取得 → PLAY |
+| PLAY | 通常走行 |
+| PAUSED | `visibilitychange` で非表示になったら入る。ループと音を止める |
+| 復帰 | 表示に戻ったら `dt` をリセットし、`AudioContext.resume()`、wake lockを取り直して PLAY。傾きの基準は変えない |
+| ENDING | おわりの時間に達したら入る(12章) |
+| SLEEP | おやすみの絵。タップしても何も起きない。設定からのみ再開 |
+
+## 12. おわりの演出(ending.js)
+
+設定「おわりの時間」(5分 / 10分 / なし、初期値5分)。PLAYの累計時間が達したら:
+
+1. `END_SUNSET_SEC` 秒かけて空を夕焼け色に変える
+2. 道の先に車庫(`garage`)を置く。道幅いっぱいの大きさなので、どこを走っていても入れる
+3. 車庫に入ったら画面をゆっくり暗くし、`goodnight` の絵を表示 → SLEEP
+
+この間もジャイロ操作は有効のままにする。
+
+## 13. 画像素材(assets.js)
+
+### 13.1 方針
+
+- 画像はGPTで生成し、`.claude/skills/gpt-asset-loop` のスキルで切り出し・WebP化して `assets/img/` に置く
+- **画像が無くてもアプリは動く**。`AssetStore.get(name)` が `null` を返したら、下表のプレースホルダー図形を描く
+- 読み込みは起動時に非同期で行い、読み込めた物から順に使う
+- 道路・白線・縞・空のグラデーション・星・きらきらは画像を使わずコードで描く
+
+### 13.2 素材一覧
+
+| name | パス | 用途 | プレースホルダー |
+| --- | --- | --- | --- |
+| car_red / car_blue / car_yellow / car_white | `assets/img/car/` | 自車(真後ろから、運転手が見える) | 角丸四角+黒いタイヤ2つ |
+| puddle, leaves, frog, ball, ducks, turtle | `assets/img/obstacle/` | 障害物 | 色つきの円 |
+| tree_round, tree_tall, bush, flowers | `assets/img/roadside/` | 全場面共通の道ばた | 緑の円+茶色の棒 |
+| cow, windmill, barn, balloon | `assets/img/meadow/` | 草原(balloonは空) | 色つきの角丸四角 |
+| palm, lighthouse, yacht, seagull | `assets/img/sea/` | 海沿い(seagullは空、yachtは遠景) | 同上 |
+| building_a, building_b, signal, house | `assets/img/town/` | 街 | 同上 |
+| pine, owl, streetlamp, moon | `assets/img/night/` | 夜(moonは空) | 同上 |
+| mountain_a, mountain_b, island, cloud | `assets/img/far/` | 昼の遠景・雲 | 半円 |
+| city_a, city_b, mountain_night_a, mountain_night_b | `assets/img/far/` | 夕方・夜の遠景 | 半円 |
+| garage, goodnight | `assets/img/ending/` | おわりの演出 | 四角 / 三日月 |
+| icon-180.png, icon-192.png, icon-512.png | `assets/icons/` | アプリアイコン | なし |
+
+- 形式はWebP(透過あり)。長辺512px、遠景の山・街並み・島だけ長辺1024px(画面幅の4割ほどに引き伸ばすため)
+- アイコンだけはPNGで透過なし(iOSは透過部分を黒く塗るため)
+- 画像の下端中央を接地点として描く(道ばたの物・障害物)。空の物は中心基準
+
+## 14. 大人向け設定(settings.js)
+
+**開き方**: 画面の左上と右下の角(それぞれ短辺の15%四方)を同時に2秒押し続ける。手のひらを置いただけでは届かない位置。
+
+| 項目 | 選択肢(初期値を太字) |
+| --- | --- |
+| 音 | **オン** / オフ |
+| 速度 | ゆっくり / **ふつう** |
+| 障害物 | **あり** / なし |
+| ジャイロ感度 | 弱 / **中** / 強 |
+| 車の色 | **赤** / 青 / 黄 / 白 |
+| おわりの時間 | **5分** / 10分 / なし |
+| 傾きをリセット | ボタン(その時の持ち方を基準にする) |
+| デバッグ表示 | **オフ** / オン |
+| 閉じる | ボタン |
+
+- ボタンは大きく、文字ありでよい(大人向け)
+- 保存は `localStorage` のキー `driveapp.settings.v1`。読み書きは必ず `try/catch`。iOSのPWAは7日使わないと消えることがあるので、読めなければ初期値で動く
+
+## 15. PWA
+
+- `manifest.webmanifest`: `name`, `short_name`, `display: "fullscreen"`, `orientation: "landscape"`, `background_color`, `theme_color`, アイコン192/512。iOSは `orientation` を無視するが、6章の回転で対応済み
+- `index.html` の head:
+  - `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">`
+  - `<meta name="apple-mobile-web-app-capable" content="yes">`
+  - `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`
+  - `<link rel="apple-touch-icon" href="assets/icons/icon-180.png">`
+- CSS: `touch-action: none`、`overscroll-behavior: none`、`-webkit-user-select: none`、`-webkit-touch-callout: none`、body はスクロールしない
+- `sw.js`: アプリのファイルと `assets/` をすべてキャッシュするキャッシュ優先方式。`CACHE_VERSION` を上げたら古いキャッシュを消す
+- Screen Wake Lock: START のタップで `navigator.wakeLock.request('screen')`。復帰時に取り直す。未対応なら何もしない
+
+## 16. 性能とデバッグ
+
+- 60fpsを目標。DPRは最大2
+- 路面は台形の塗りつぶしなので本数は多くてよい。画像スプライトは1フレーム40個以下
+- カメラを揺らす演出は入れない(乗り物酔い防止)
+- デバッグ表示(debug.js、設定でオン): 傾きの生の角度、基準との差、`steer`、fps、場面名、画面回転角、safe areaの値、読み込めた素材の数。画面の左上に小さく半透明で出す
+- iPhoneだけで開発するので実機のコンソールログは見られない。デバッグ表示は段階3で入れ、以降の不具合報告はこの表示を見て行う
+
+## 17. 開発段階
+
+| 段階 | 作るもの | 合格条件 |
+| --- | --- | --- |
+| 1 | index.html、style.css、config.js、main.js、road.js、manifest.webmanifest と sw.js の空の雛形。道路が手前に流れる。カーブと丘あり | デプロイプレビューをiPhoneで開くと、道が前に進んで見える。カーブで道が曲がる。カクつかない |
+| 2 | player.js、input.js(タッチ。PC確認用にキーボードも)。自車の表示と左右移動、ロール | iPhoneで画面の左右を押すと車が動く。カーブ中も操作感が変わらない |
+| 3 | input.js(ジャイロ)、START画面、許可要求、キャリブレーション、audio.js(エンジン・クラクション・風切り)、debug.js | iPhone実機で右に傾けると右に動く。デッドゾーン内で車が揺れない。タップで音が鳴る |
+| 4 | コードは書かない。実機で子どもに渡し、CFGを調整 | 調整したCFGの値と理由を記録 |
+| 5 | assets.js、scenery.js(空・遠景・道ばたの物、まず1場面) | 奥行きを感じる。素材が無くてもプレースホルダーで動く |
+| 6 | obstacles.js、衝突と回避の演出と音 | 中央にいると軽く当たり、傾けると避けられる。当たっても止まらない |
+| 7 | 4場面の切り替え、BGM | 60秒ごとに景色と曲がなめらかに変わる |
+| 8 | orientation.js(縦持ち回転・safe area)、一時停止と復帰、wake lock、settings.js、ending.js、PWA | 回転ロック中の縦持ちでも遊べる。ノッチに車が隠れない。アプリ切替から戻っても正常。ホーム画面から全画面で起動し、機内モードでも動く |
+
+## 18. やってはいけないこと
+
+- フレームワーク、バンドラー、外部CDN、npmパッケージを使う
+- 外部への通信(解析、広告、フォント読み込みを含む)
+- 子どもが見る画面に文字・数字・スコアを出す
+- 点滅、カメラの揺れ、赤い警告表示、振動
+- 衝突で車を止める、減速させる
+- ゲーム中に傾きの基準を変える操作を作る
+- `beta` / `gamma` で傾きを取る
+- 回転の補正を `steerAngleDeg` 以外の場所で行う
+- 設定以外のデータを保存する
+- `inbox/` と `assets-src/` をアプリから参照する、またはNetlifyに公開する
+- 指示されていない段階の機能を先に作る
+
+## 19. あとから足せる案(今は作らない)
+
+- トンネル、橋、踏切などの通過イベント
+- 走った距離で増えていく動物
+- 雨や雪の天気
+- 車の種類を選ぶ画面

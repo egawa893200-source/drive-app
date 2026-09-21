@@ -1,0 +1,673 @@
+{
+  "style": "1〜2歳の子ども向け絵本のような、やわらかいフラットイラスト。形は太く大きく、角はすべて丸い。輪郭線は描かない。グラデーション、質感、光沢、細かい模様、細い線は使わない。影は物の真下の薄い楕円だけ。1つの物に使う色は3色まで。文字・数字・ロゴは入れない。既存のアニメ、絵本、玩具、ゲームのキャラクターや商品に似せない、完全オリジナルのデザインにする。",
+  "palette": "道路の灰色(#7C8089)、草地の黄緑(#7BC96F)、木の緑(#4E9A4A)の中に置いても調和する、明るくやさしい色にする。",
+  "background": "背景は完全な透明(透過PNG)にする。透明にできない場合は、背景全体を単色のマゼンタ(#FF00FF)で塗りつぶし、物体にはピンクや紫系の色を使わない。",
+  "anchor": "最初に採用した赤い車の画像と同じタッチ、同じ塗り方、同じ丸み、同じ色の明るさで描く。",
+  "groups": [
+    {
+      "id": "ref_car",
+      "title": "基準の車(赤)"
+    },
+    {
+      "id": "cars",
+      "title": "車の色違い"
+    },
+    {
+      "id": "obstacles",
+      "title": "障害物"
+    },
+    {
+      "id": "roadside",
+      "title": "道ばたの植物(全場面共通)"
+    },
+    {
+      "id": "meadow",
+      "title": "朝の草原"
+    },
+    {
+      "id": "sea",
+      "title": "昼の海沿い"
+    },
+    {
+      "id": "town",
+      "title": "夕方の街"
+    },
+    {
+      "id": "night",
+      "title": "夜の山道"
+    },
+    {
+      "id": "far_day",
+      "title": "昼の遠景"
+    },
+    {
+      "id": "far_evening",
+      "title": "夕方・夜の遠景"
+    },
+    {
+      "id": "ending",
+      "title": "おわりの演出"
+    },
+    {
+      "id": "icon",
+      "title": "アプリアイコン"
+    }
+  ],
+  "sheets": [
+    {
+      "id": "ref_car",
+      "group": "ref_car",
+      "title": "基準の車(赤)",
+      "type": "reference",
+      "size": "正方形",
+      "prompt": "真後ろから少し見下ろした角度の、小さな丸い乗用車。車体は赤(#F24E4E)の角丸の箱型。上に大きめのリアガラスがあり、その向こうに運転している{character}の後ろ姿(頭と耳)が見える。下に黒い角丸のタイヤが左右に2つ見える。左右に小さな丸い赤いテールランプ。ナンバープレートはなし。",
+      "items": [
+        {
+          "name": "car_red",
+          "dir": "car",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "car_blue",
+      "group": "cars",
+      "title": "車の色違い: car_blue",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "採用した赤い車とまったく同じ形・角度・大きさ・同じ運転手で、車体の色だけを変えた車。色は青(#4A90E2)。",
+      "items": [
+        {
+          "name": "car_blue",
+          "dir": "car",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "car_yellow",
+      "group": "cars",
+      "title": "車の色違い: car_yellow",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "採用した赤い車とまったく同じ形・角度・大きさ・同じ運転手で、車体の色だけを変えた車。色は黄色(#F5C542)。",
+      "items": [
+        {
+          "name": "car_yellow",
+          "dir": "car",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "car_white",
+      "group": "cars",
+      "title": "車の色違い: car_white",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "採用した赤い車とまったく同じ形・角度・大きさ・同じ運転手で、車体の色だけを変えた車。色は白(#F7F7F2)。窓とタイヤで形が分かるように。",
+      "items": [
+        {
+          "name": "car_white",
+          "dir": "car",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "puddle",
+      "group": "obstacles",
+      "title": "障害物: puddle",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道路の上に置く、怖くない可愛い物。少し上から見下ろした角度。描くもの: 水色の平たい楕円の水たまり",
+      "items": [
+        {
+          "name": "puddle",
+          "dir": "obstacle",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "leaves",
+      "group": "obstacles",
+      "title": "障害物: leaves",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道路の上に置く、怖くない可愛い物。少し上から見下ろした角度。描くもの: オレンジと黄色の落ち葉の山",
+      "items": [
+        {
+          "name": "leaves",
+          "dir": "obstacle",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "frog",
+      "group": "obstacles",
+      "title": "障害物: frog",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道路の上に置く、怖くない可愛い物。少し上から見下ろした角度。描くもの: 正面を向いてすわっている緑のカエル",
+      "items": [
+        {
+          "name": "frog",
+          "dir": "obstacle",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "ball",
+      "group": "obstacles",
+      "title": "障害物: ball",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道路の上に置く、怖くない可愛い物。少し上から見下ろした角度。描くもの: 赤と白の大きなボール",
+      "items": [
+        {
+          "name": "ball",
+          "dir": "obstacle",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "ducks",
+      "group": "obstacles",
+      "title": "障害物: ducks",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道路の上に置く、怖くない可愛い物。少し上から見下ろした角度。描くもの: 親アヒル1羽と子アヒル2羽が、くっついて一列に並んだもの(ひとかたまりで)",
+      "items": [
+        {
+          "name": "ducks",
+          "dir": "obstacle",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "turtle",
+      "group": "obstacles",
+      "title": "障害物: turtle",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道路の上に置く、怖くない可愛い物。少し上から見下ろした角度。描くもの: 正面を向いた、甲羅の丸いカメ",
+      "items": [
+        {
+          "name": "turtle",
+          "dir": "obstacle",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "tree_round",
+      "group": "roadside",
+      "title": "道ばたの植物(全場面共通): tree_round",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道ばたに置く植物。真横から見た角度で、地面に立っている。描くもの: 茶色の幹に丸い葉のかたまりの木",
+      "items": [
+        {
+          "name": "tree_round",
+          "dir": "roadside",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "tree_tall",
+      "group": "roadside",
+      "title": "道ばたの植物(全場面共通): tree_tall",
+      "type": "item",
+      "size": "縦長",
+      "prompt": "道ばたに置く植物。真横から見た角度で、地面に立っている。描くもの: 細長い形の背の高い木",
+      "items": [
+        {
+          "name": "tree_tall",
+          "dir": "roadside",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "bush",
+      "group": "roadside",
+      "title": "道ばたの植物(全場面共通): bush",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道ばたに置く植物。真横から見た角度で、地面に立っている。描くもの: 丸くて低い茂み",
+      "items": [
+        {
+          "name": "bush",
+          "dir": "roadside",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "flowers",
+      "group": "roadside",
+      "title": "道ばたの植物(全場面共通): flowers",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "道ばたに置く植物。真横から見た角度で、地面に立っている。描くもの: 赤・黄・白の花がひとかたまりに咲いた花の群れ",
+      "items": [
+        {
+          "name": "flowers",
+          "dir": "roadside",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "cow",
+      "group": "meadow",
+      "title": "朝の草原: cow",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "朝の草原の場面に置く物。真横か正面から見た角度。描くもの: 正面を向いた白黒ぶちの牛",
+      "items": [
+        {
+          "name": "cow",
+          "dir": "meadow",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "windmill",
+      "group": "meadow",
+      "title": "朝の草原: windmill",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "朝の草原の場面に置く物。真横か正面から見た角度。描くもの: 白い風車(羽は太く4枚)",
+      "items": [
+        {
+          "name": "windmill",
+          "dir": "meadow",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "barn",
+      "group": "meadow",
+      "title": "朝の草原: barn",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "朝の草原の場面に置く物。真横か正面から見た角度。描くもの: 赤い屋根の納屋",
+      "items": [
+        {
+          "name": "barn",
+          "dir": "meadow",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "balloon",
+      "group": "meadow",
+      "title": "朝の草原: balloon",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "朝の草原の場面に置く物。真横か正面から見た角度。描くもの: しま模様の熱気球。かごとロープも一体で",
+      "items": [
+        {
+          "name": "balloon",
+          "dir": "meadow",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "palm",
+      "group": "sea",
+      "title": "昼の海沿い: palm",
+      "type": "item",
+      "size": "縦長",
+      "prompt": "昼の海沿いの場面に置く物。真横から見た角度。描くもの: ヤシの木",
+      "items": [
+        {
+          "name": "palm",
+          "dir": "sea",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "lighthouse",
+      "group": "sea",
+      "title": "昼の海沿い: lighthouse",
+      "type": "item",
+      "size": "縦長",
+      "prompt": "昼の海沿いの場面に置く物。真横から見た角度。描くもの: 赤と白のしまの灯台",
+      "items": [
+        {
+          "name": "lighthouse",
+          "dir": "sea",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "yacht",
+      "group": "sea",
+      "title": "昼の海沿い: yacht",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "昼の海沿いの場面に置く物。真横から見た角度。描くもの: 白い帆のヨット(水面は描かない)",
+      "items": [
+        {
+          "name": "yacht",
+          "dir": "sea",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "seagull",
+      "group": "sea",
+      "title": "昼の海沿い: seagull",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "昼の海沿いの場面に置く物。真横から見た角度。描くもの: 羽を広げて飛んでいるかもめ",
+      "items": [
+        {
+          "name": "seagull",
+          "dir": "sea",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "building_a",
+      "group": "town",
+      "title": "夕方の街: building_a",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "街の場面に置く物。正面から見た角度。窓は大きな四角で数を少なく。描くもの: 水色の低いビル",
+      "items": [
+        {
+          "name": "building_a",
+          "dir": "town",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "building_b",
+      "group": "town",
+      "title": "夕方の街: building_b",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "街の場面に置く物。正面から見た角度。窓は大きな四角で数を少なく。描くもの: クリーム色の低いビル(形を変えて)",
+      "items": [
+        {
+          "name": "building_b",
+          "dir": "town",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "signal",
+      "group": "town",
+      "title": "夕方の街: signal",
+      "type": "item",
+      "size": "縦長",
+      "prompt": "街の場面に置く物。正面から見た角度。窓は大きな四角で数を少なく。描くもの: 3つの丸いランプの信号機。青だけ点灯",
+      "items": [
+        {
+          "name": "signal",
+          "dir": "town",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "house",
+      "group": "town",
+      "title": "夕方の街: house",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "街の場面に置く物。正面から見た角度。窓は大きな四角で数を少なく。描くもの: 三角屋根の小さな家",
+      "items": [
+        {
+          "name": "house",
+          "dir": "town",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "pine",
+      "group": "night",
+      "title": "夜の山道: pine",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "夜の場面に置く物。色は少し落ち着いたトーンにするが、黒くしすぎず形がはっきり分かるように。描くもの: とがった形の針葉樹",
+      "items": [
+        {
+          "name": "pine",
+          "dir": "night",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "owl",
+      "group": "night",
+      "title": "夜の山道: owl",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "夜の場面に置く物。色は少し落ち着いたトーンにするが、黒くしすぎず形がはっきり分かるように。描くもの: 正面を向いたフクロウ。目はやさしく",
+      "items": [
+        {
+          "name": "owl",
+          "dir": "night",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "streetlamp",
+      "group": "night",
+      "title": "夜の山道: streetlamp",
+      "type": "item",
+      "size": "縦長",
+      "prompt": "夜の場面に置く物。色は少し落ち着いたトーンにするが、黒くしすぎず形がはっきり分かるように。描くもの: 暖かい黄色い光の街灯(太い柱)",
+      "items": [
+        {
+          "name": "streetlamp",
+          "dir": "night",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "moon",
+      "group": "night",
+      "title": "夜の山道: moon",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "夜の場面に置く物。色は少し落ち着いたトーンにするが、黒くしすぎず形がはっきり分かるように。描くもの: 顔のない黄色い三日月",
+      "items": [
+        {
+          "name": "moon",
+          "dir": "night",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "mountain_a",
+      "group": "far_day",
+      "title": "昼の遠景: mountain_a",
+      "type": "item",
+      "size": "横長",
+      "prompt": "遠くに見える背景用のシルエット。細部は描かず、ほぼ単色のかたまりにする。描くもの: なだらかな緑の山(横長)",
+      "items": [
+        {
+          "name": "mountain_a",
+          "dir": "far",
+          "target": 1024
+        }
+      ]
+    },
+    {
+      "id": "mountain_b",
+      "group": "far_day",
+      "title": "昼の遠景: mountain_b",
+      "type": "item",
+      "size": "横長",
+      "prompt": "遠くに見える背景用のシルエット。細部は描かず、ほぼ単色のかたまりにする。描くもの: 形の違うなだらかな緑の山(横長)",
+      "items": [
+        {
+          "name": "mountain_b",
+          "dir": "far",
+          "target": 1024
+        }
+      ]
+    },
+    {
+      "id": "island",
+      "group": "far_day",
+      "title": "昼の遠景: island",
+      "type": "item",
+      "size": "横長",
+      "prompt": "遠くに見える背景用のシルエット。細部は描かず、ほぼ単色のかたまりにする。描くもの: 木が2〜3本生えた小さな島(横長、海は描かない)",
+      "items": [
+        {
+          "name": "island",
+          "dir": "far",
+          "target": 1024
+        }
+      ]
+    },
+    {
+      "id": "cloud",
+      "group": "far_day",
+      "title": "昼の遠景: cloud",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "遠くに見える背景用のシルエット。細部は描かず、ほぼ単色のかたまりにする。描くもの: もこもこの白い雲",
+      "items": [
+        {
+          "name": "cloud",
+          "dir": "far",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "city_a",
+      "group": "far_evening",
+      "title": "夕方・夜の遠景: city_a",
+      "type": "item",
+      "size": "横長",
+      "prompt": "遠くに見える背景用のシルエット。細部や窓は描かず、ほぼ単色のかたまりにする。描くもの: 薄紫がかった灰色の街並みのシルエット(横長)",
+      "items": [
+        {
+          "name": "city_a",
+          "dir": "far",
+          "target": 1024
+        }
+      ]
+    },
+    {
+      "id": "city_b",
+      "group": "far_evening",
+      "title": "夕方・夜の遠景: city_b",
+      "type": "item",
+      "size": "横長",
+      "prompt": "遠くに見える背景用のシルエット。細部や窓は描かず、ほぼ単色のかたまりにする。描くもの: 形の違う街並みのシルエット(横長)",
+      "items": [
+        {
+          "name": "city_b",
+          "dir": "far",
+          "target": 1024
+        }
+      ]
+    },
+    {
+      "id": "mountain_night_a",
+      "group": "far_evening",
+      "title": "夕方・夜の遠景: mountain_night_a",
+      "type": "item",
+      "size": "横長",
+      "prompt": "遠くに見える背景用のシルエット。細部や窓は描かず、ほぼ単色のかたまりにする。描くもの: 紺色のなだらかな山(横長)",
+      "items": [
+        {
+          "name": "mountain_night_a",
+          "dir": "far",
+          "target": 1024
+        }
+      ]
+    },
+    {
+      "id": "mountain_night_b",
+      "group": "far_evening",
+      "title": "夕方・夜の遠景: mountain_night_b",
+      "type": "item",
+      "size": "横長",
+      "prompt": "遠くに見える背景用のシルエット。細部や窓は描かず、ほぼ単色のかたまりにする。描くもの: 形の違う紺色の山(横長)",
+      "items": [
+        {
+          "name": "mountain_night_b",
+          "dir": "far",
+          "target": 1024
+        }
+      ]
+    },
+    {
+      "id": "garage",
+      "group": "ending",
+      "title": "おわりの演出: garage",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "アプリの最後に出す絵。描くもの: 正面から見た小さな車庫。シャッターが開いていて中は暗い",
+      "items": [
+        {
+          "name": "garage",
+          "dir": "ending",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "goodnight",
+      "group": "ending",
+      "title": "おわりの演出: goodnight",
+      "type": "item",
+      "size": "正方形",
+      "prompt": "アプリの最後に出す絵。描くもの: 三日月と星に囲まれて、目を閉じてまるくなって眠っている{character}",
+      "items": [
+        {
+          "name": "goodnight",
+          "dir": "ending",
+          "target": 512
+        }
+      ]
+    },
+    {
+      "id": "icon",
+      "group": "icon",
+      "title": "アプリアイコン",
+      "type": "icon",
+      "size": "正方形",
+      "prompt": "スマホアプリのアイコン。画像全体を塗りつぶす(透明にしない)。背景は水色の空と緑の丘。中央に採用した赤い車を大きく、真後ろから。文字なし。角は丸めない(スマホが自動で丸めるため)。",
+      "items": [
+        {
+          "name": "icon",
+          "dir": "icons",
+          "target": 512
+        }
+      ]
+    }
+  ]
+}
