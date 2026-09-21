@@ -18,13 +18,14 @@ export const CFG = {
   ROLL_MAX_DEG: 8,
 
   // 操作
-  // 段階4: 25 では少し傾けただけで端まで行ってしまったので 40 に広げた。
-  // 端まで行くのに必要な傾きは 29度(25+4) から 44度(40+4) になる
-  STEER_RANGE_DEG: 40,
+  // 段階4: 25 -> 40 でもまだ敏感だったので 60 まで広げた。
+  // 端まで行くのに必要な傾きは 29度(25+4) から 64度(60+4) になる
+  STEER_RANGE_DEG: 60,
   STEER_DEADZONE_DEG: 4,
   STEER_SIGN: 1,               // 実機で逆に動いたら -1
   STEER_SENSITIVITY: { low: 0.7, mid: 1.0, high: 1.4 },
-  LATERAL_SPEED: 1.2,          // 道路座標/秒(道幅の60%/秒)
+  // 段階4: 1.2 では傾けたときに横へ流れるのが速く、敏感に感じたので 0.8 にした
+  LATERAL_SPEED: 0.8,          // 道路座標/秒
   FOLLOW_TAU: 0.2,             // 追従の時定数(秒)
   GRAVITY_LPF_TAU: 0.08,       // 加速度センサーの平滑化(秒)
   TOUCH_RAMP_TAU: 0.15,

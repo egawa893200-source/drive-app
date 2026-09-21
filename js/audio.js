@@ -3,15 +3,17 @@
 
 const ENGINE = { freq: 55, cutoff: 300, gain: 0.05 };
 const WIND = { center: 800, q: 0.8, maxGain: 0.05 };
-const HORN = { gain: 0.09, cutoff: 1100, dur: 0.28, minGapMs: 180 };
+// 段階4: 音が高すぎたので、音程を1オクターブ下げた。
+// ローパスも下げないと、下がったぶん倍音が相対的に目立ってブーブー鳴るため
+const HORN = { gain: 0.09, cutoff: 700, dur: 0.28, minGapMs: 180 };
 
 // クラクションは3種類からランダム。2音の短い矩形波(DESIGN.md 10章)。
 // 本物のクラクションは2音を「同時に」鳴らす。順番に鳴らすと呼び鈴になってしまう。
 // 組み合わせは長3度にしてある
 const HORN_NOTES = [
-  [392, 494],
-  [440, 554],
-  [349, 440],
+  [196, 247],
+  [220, 277],
+  [247, 311],
 ];
 
 export function createAudio() {
