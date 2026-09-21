@@ -44,6 +44,15 @@ function drawPlaceholder(ctx, w, h) {
   roundRect(ctx, x + w * 0.80, y + h * 0.62, w * 0.14, h * 0.12, w * 0.05);
 }
 
+// 中心 (cx, cy) に、一辺 size の車を描く。起動画面でも使う
+export function drawCar(ctx, cx, cy, size, rollDeg = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (rollDeg) ctx.rotate(rollDeg * Math.PI / 180);
+  drawPlaceholder(ctx, size, size);
+  ctx.restore();
+}
+
 export function createPlayer() {
   let x = 0;        // 道路座標 [-1, 1]
   let roll = 0;     // 見た目の傾き(度)
@@ -76,15 +85,9 @@ export function createPlayer() {
   // carLine: その高さでの道の中心と幅(road.js が返す)
   function draw(ctx, W, H, carLine) {
     const w = width(W, H);
-    const h = w;
     const cx = carLine.x + x * carLine.w;
-    const cy = H * CFG.CAR_SCREEN_Y_RATIO - h / 2;   // CAR_SCREEN_Y_RATIO は下端
-
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(roll * Math.PI / 180);
-    drawPlaceholder(ctx, w, h);
-    ctx.restore();
+    const cy = H * CFG.CAR_SCREEN_Y_RATIO - w / 2;   // CAR_SCREEN_Y_RATIO は下端
+    drawCar(ctx, cx, cy, w, roll);
   }
 
   return {
