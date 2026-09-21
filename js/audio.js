@@ -3,18 +3,41 @@
 
 const ENGINE = { freq: 55, cutoff: 300, gain: 0.05 };
 const WIND = { center: 800, q: 0.8, maxGain: 0.05 };
-// 段階4: 音が高すぎたので、音程を1オクターブ下げた。
-// ローパスも下げないと、下がったぶん倍音が相対的に目立ってブーブー鳴るため
-const HORN = { gain: 0.09, cutoff: 700, dur: 0.28, minGapMs: 180 };
+// クラクション(DESIGN.md 10章の「2音の短い矩形波」)。
+// 段階4: ローパスを下げすぎて笛のような純音になっていた。クラクションらしさは
+// 倍音のざらつきと、2音のわずかなうなりにあるので、そちらを作り直した。
+const HORN = {
+  gain: 0.06,        // 波形をつぶしたあとの出力。耳に優しい音量に抑える
+  dur: 0.32,
+  minGapMs: 180,
+  detuneCents: 9,    // 同じ音を少しずらして重ね、うなりを出す
+  drive: 12,         // 波形をつぶして金属的なざらつきを出す
+  formant: 1800,     // クラクション特有の鳴りの中心
+  formantQ: 1.1,
+  formantGainDb: 9,
+  cutoff: 3200,      // これより上は耳に刺さるので落とす
+  riseSec: 0.03,     // 鳴り始めに少しだけ音程が上がる(本物の立ち上がり)
+};
 
-// クラクションは3種類からランダム。2音の短い矩形波(DESIGN.md 10章)。
-// 本物のクラクションは2音を「同時に」鳴らす。順番に鳴らすと呼び鈴になってしまう。
-// 組み合わせは長3度にしてある
+// 本物のクラクションは2音を「同時に」鳴らす。順番に鳴らすと呼び鈴になる。
+// 実際の車のクラクションは長3度に調律されているものが多い
 const HORN_NOTES = [
-  [196, 247],
-  [220, 277],
-  [247, 311],
+  [277, 349],
+  [311, 392],
+  [262, 330],
 ];
+
+// tanh でやわらかくつぶす。角が立ちすぎないディストーション
+function driveCurve(drive) {
+  const n = 1024;
+  const curve = new Float32Array(n);
+  const norm = Math.tanh(drive);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * drive) / norm;
+  }
+  return curve;
+}
 
 export function createAudio() {
   let ctx = null;
@@ -55,13 +78,28 @@ export function createAudio() {
     src.start();
   }
 
-  // 矩形波のままだと耳に刺さるので、角を落としてから出す。
-  // クラクションのたびに作らず、1本を使い回す
+  // 鳴らすたびに作らず、1本を使い回す。
+  // つぶす → 鳴りを強調 → 高いところを落とす、の順に通す
   function buildHorn() {
-    hornBus = ctx.createBiquadFilter();
-    hornBus.type = 'lowpass';
-    hornBus.frequency.value = HORN.cutoff;
-    hornBus.connect(master);
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = driveCurve(HORN.drive);
+    shaper.oversample = '4x';
+
+    const formant = ctx.createBiquadFilter();
+    formant.type = 'peaking';
+    formant.frequency.value = HORN.formant;
+    formant.Q.value = HORN.formantQ;
+    formant.gain.value = HORN.formantGainDb;
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = HORN.cutoff;
+
+    const out = ctx.createGain();
+    out.gain.value = HORN.gain;
+
+    shaper.connect(formant).connect(lp).connect(out).connect(master);
+    hornBus = shaper;
   }
 
   // 起動画面のタップの中から呼ぶ(iOSはユーザー操作の中でしか音を出せない)
@@ -89,21 +127,30 @@ export function createAudio() {
     windGain.gain.setTargetAtTime(v, ctx.currentTime, 0.08);
   }
 
+  // 1音ぶん。同じ音程を少しずらして2本重ね、うなりを作る
   function hornNote(freq, peak) {
     const t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    osc.type = 'square';
-    osc.frequency.value = freq;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(peak, t + 0.02);
-    gain.gain.setValueAtTime(peak, t + HORN.dur - 0.06);
+    gain.gain.linearRampToValueAtTime(peak, t + 0.008);   // 立ち上がりは速く
+    gain.gain.setValueAtTime(peak, t + HORN.dur - 0.05);
     gain.gain.linearRampToValueAtTime(0, t + HORN.dur);
-    osc.connect(gain).connect(hornBus);
-    osc.start(t);
-    osc.stop(t + HORN.dur + 0.02);
-    osc.onended = () => {
-      osc.disconnect();
+    gain.connect(hornBus);
+
+    const oscs = [];
+    for (const cents of [-HORN.detuneCents, HORN.detuneCents]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.detune.value = cents;
+      osc.frequency.setValueAtTime(freq * 0.96, t);
+      osc.frequency.linearRampToValueAtTime(freq, t + HORN.riseSec);
+      osc.connect(gain);
+      osc.start(t);
+      osc.stop(t + HORN.dur + 0.02);
+      oscs.push(osc);
+    }
+    oscs[oscs.length - 1].onended = () => {
+      for (const osc of oscs) osc.disconnect();
       gain.disconnect();
     };
   }
@@ -115,8 +162,9 @@ export function createAudio() {
     if (now - lastHornAt < HORN.minGapMs) return;
     lastHornAt = now;
     const [a, b] = HORN_NOTES[Math.floor(Math.random() * HORN_NOTES.length)];
-    hornNote(a, HORN.gain);
-    hornNote(b, HORN.gain * 0.7);
+    // つぶす前の段階では振幅を大きめに入れる。ここでの差が音色のざらつきになる
+    hornNote(a, 0.5);
+    hornNote(b, 0.38);
   }
 
   return {
