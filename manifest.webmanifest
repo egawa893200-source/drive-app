@@ -1,0 +1,10 @@
+{
+  "name": "ドライブ",
+  "short_name": "ドライブ",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#7EC8F0",
+  "theme_color": "#7EC8F0",
+  "icons": []
+}
