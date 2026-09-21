@@ -161,13 +161,27 @@ export function createRoad() {
     }
   }
 
-  // position: カメラの奥行き。playerX: 道路座標 [-1, 1](段階2で使う)
-  function render(ctx, W, H, position, playerX = 0) {
+  // 平坦な直線での、自車の高さにおける道幅の半分(画素)。
+  // カーブや丘で毎フレーム変わらない値なので、自車の可動範囲を決めるのに使う
+  function carLineHalfWidth(W) {
+    const scale = (CFG.CAR_SCREEN_Y_RATIO - CFG.HORIZON_RATIO) * 2 / CFG.CAMERA_HEIGHT;
+    return scale * CFG.ROAD_HALF_WIDTH * W / 2;
+  }
+
+  // 自車の高さでの道の中心と幅。描画のたびに更新する(DESIGN.md 7.3)
+  const carLine = { x: 0, w: 0 };
+
+  function render(ctx, W, H, position) {
     drawSky(ctx, W, H);
 
     const base = segmentAt(position);
     const basePercent = (position % SEG) / SEG;
     const cameraY = CFG.CAMERA_HEIGHT + roadYAt(position);
+    const carY = H * CFG.CAR_SCREEN_Y_RATIO;
+
+    carLine.x = W / 2;
+    carLine.w = carLineHalfWidth(W);
+    let carLineFound = false;
 
     // 手前から奥へカーブ量を足していくことで、道が曲がって見える
     let x = 0;
@@ -179,13 +193,21 @@ export function createRoad() {
       const seg = segments[i % segments.length];
       // 一周を越えた区間は、奥行きを一周ぶん手前に戻して投影する
       const cameraZ = position - (i >= segments.length ? length : 0);
-      const cameraX = playerX * CFG.ROAD_HALF_WIDTH - x;
 
-      project(seg.p1, cameraX, cameraY, cameraZ, W, H);
-      project(seg.p2, cameraX - dx, cameraY, cameraZ, W, H);
+      project(seg.p1, -x, cameraY, cameraZ, W, H);
+      project(seg.p2, -x - dx, cameraY, cameraZ, W, H);
 
       x += dx;
       dx += seg.curve;
+
+      // 自車の高さをまたぐ、いちばん手前の区間から道の中心と幅を取る
+      if (!carLineFound && seg.p1.screen.y >= carY && seg.p2.screen.y <= carY) {
+        const span = seg.p1.screen.y - seg.p2.screen.y;
+        const t = span > 0 ? (seg.p1.screen.y - carY) / span : 0;
+        carLine.x = seg.p1.screen.x + (seg.p2.screen.x - seg.p1.screen.x) * t;
+        carLine.w = seg.p1.screen.w + (seg.p2.screen.w - seg.p1.screen.w) * t;
+        carLineFound = true;
+      }
 
       if (seg.p1.camera.z <= CAMERA_DEPTH) continue;        // カメラの後ろ
       if (seg.p2.screen.y >= seg.p1.screen.y) continue;     // 裏を向いている
@@ -194,7 +216,9 @@ export function createRoad() {
       drawSegment(ctx, W, seg, Math.floor(seg.index / CFG.RUMBLE_SEGMENTS) % 2 === 0);
       maxY = seg.p2.screen.y;
     }
+
+    return carLine;
   }
 
-  return { length, render };
+  return { length, render, carLineHalfWidth };
 }
