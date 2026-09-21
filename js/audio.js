@@ -3,35 +3,43 @@
 
 const ENGINE = { freq: 55, cutoff: 300, gain: 0.05 };
 const WIND = { center: 800, q: 0.8, maxGain: 0.05 };
-// クラクション(DESIGN.md 10章の「2音の短い矩形波」)。
-// 段階4: ローパスを下げすぎて笛のような純音になっていた。クラクションらしさは
-// 倍音のざらつきと、2音のわずかなうなりにあるので、そちらを作り直した。
+// クラクション。DESIGN.md 10章は「2音の短い矩形波」だが、10章の表は
+// 「作り方の目安」なので、本物らしさを優先して次のように作り直した。
+//
+// 段階4の反省: 矩形波に WaveShaper(tanh)をかけてもほとんど何も起きない。
+// 矩形波はもともと振幅が上下一定なので、つぶす余地がないため。結果として
+// ざらつきが出ず、きれいな2音の和音のままだった。
+// 本物のクラクションは (1)倍音が偶数次まで密に詰まっている (2)1〜3kHz に
+// 金属の共鳴がある (3)振動板のバリバリした雑音が混ざる、の3つでできている。
 const HORN = {
-  gain: 0.06,        // 波形をつぶしたあとの出力。耳に優しい音量に抑える
-  dur: 0.32,
+  gain: 0.045,
+  dur: 0.36,
   minGapMs: 180,
-  detuneCents: 9,    // 同じ音を少しずらして重ね、うなりを出す
-  drive: 12,         // 波形をつぶして金属的なざらつきを出す
-  formant: 1800,     // クラクション特有の鳴りの中心
-  formantQ: 1.1,
-  formantGainDb: 9,
-  cutoff: 3200,      // これより上は耳に刺さるので落とす
-  riseSec: 0.03,     // 鳴り始めに少しだけ音程が上がる(本物の立ち上がり)
+  detuneCents: 12,     // 2本重ねてうなりを出す
+  drive: 6,            // ノコギリ波なのでつぶすと倍音が増える
+  lowpass: 5200,       // 本物は4kHz超まで出ている。落としすぎると笛になる
+  riseSec: 0.035,      // 鳴り始めに音程がわずかに上がる
+  // 金属の共鳴。この2つが「クラクションらしさ」の大半
+  formants: [
+    { freq: 1200, q: 1.0, gain: 8 },
+    { freq: 2600, q: 1.2, gain: 10 },
+  ],
+  // 振動板のバリバリ。鳴り始めにだけ混ぜる
+  noise: { gain: 0.35, center: 2600, q: 0.9, dur: 0.12 },
 };
 
-// 本物のクラクションは2音を「同時に」鳴らす。順番に鳴らすと呼び鈴になる。
 // 実際の車のクラクションは長3度に調律されているものが多い
 const HORN_NOTES = [
+  [262, 330],
   [277, 349],
   [311, 392],
-  [262, 330],
 ];
 
 // 衝突と回避(DESIGN.md 10章)。どちらもやわらかい音にする
 const CRASH = { gain: 0.10, from: 600, to: 300, fall: 0.2, tail: 0.3 };
 const DODGE = { gain: 0.055, notes: [523, 659, 784], step: 0.07, dur: 0.16 };
 
-// tanh でやわらかくつぶす。角が立ちすぎないディストーション
+// tanh でつぶす。ノコギリ波に効かせると倍音が増えてざらつく
 function driveCurve(drive) {
   const n = 1024;
   const curve = new Float32Array(n);
@@ -83,26 +91,30 @@ export function createAudio() {
   }
 
   // 鳴らすたびに作らず、1本を使い回す。
-  // つぶす → 鳴りを強調 → 高いところを落とす、の順に通す
+  // つぶす → 金属の共鳴を持ち上げる → 高いところを落とす、の順に通す
   function buildHorn() {
     const shaper = ctx.createWaveShaper();
     shaper.curve = driveCurve(HORN.drive);
     shaper.oversample = '4x';
 
-    const formant = ctx.createBiquadFilter();
-    formant.type = 'peaking';
-    formant.frequency.value = HORN.formant;
-    formant.Q.value = HORN.formantQ;
-    formant.gain.value = HORN.formantGainDb;
+    let node = shaper;
+    for (const f of HORN.formants) {
+      const peak = ctx.createBiquadFilter();
+      peak.type = 'peaking';
+      peak.frequency.value = f.freq;
+      peak.Q.value = f.q;
+      peak.gain.value = f.gain;
+      node = node.connect(peak);
+    }
 
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = HORN.cutoff;
+    lp.frequency.value = HORN.lowpass;
 
     const out = ctx.createGain();
     out.gain.value = HORN.gain;
 
-    shaper.connect(formant).connect(lp).connect(out).connect(master);
+    node.connect(lp).connect(out).connect(master);
     hornBus = shaper;
   }
 
@@ -131,12 +143,13 @@ export function createAudio() {
     windGain.gain.setTargetAtTime(v, ctx.currentTime, 0.08);
   }
 
-  // 1音ぶん。同じ音程を少しずらして2本重ね、うなりを作る
+  // 1音ぶん。ノコギリ波を少しずらして2本重ね、うなりを作る。
+  // 矩形波(奇数倍音だけ)より倍音が密になり、金属の鳴りに近づく
   function hornNote(freq, peak) {
     const t = ctx.currentTime;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(peak, t + 0.008);   // 立ち上がりは速く
+    gain.gain.linearRampToValueAtTime(peak, t + 0.006);   // 立ち上がりは速く
     gain.gain.setValueAtTime(peak, t + HORN.dur - 0.05);
     gain.gain.linearRampToValueAtTime(0, t + HORN.dur);
     gain.connect(hornBus);
@@ -144,7 +157,7 @@ export function createAudio() {
     const oscs = [];
     for (const cents of [-HORN.detuneCents, HORN.detuneCents]) {
       const osc = ctx.createOscillator();
-      osc.type = 'square';
+      osc.type = 'sawtooth';
       osc.detune.value = cents;
       osc.frequency.setValueAtTime(freq * 0.96, t);
       osc.frequency.linearRampToValueAtTime(freq, t + HORN.riseSec);
@@ -159,6 +172,28 @@ export function createAudio() {
     };
   }
 
+  // 振動板のバリバリした雑音。鳴り始めにだけ混ぜる
+  function hornNoise() {
+    const t = ctx.currentTime;
+    const len = Math.floor(ctx.sampleRate * HORN.noise.dur);
+    const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = HORN.noise.center;
+    bp.Q.value = HORN.noise.q;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(HORN.noise.gain, t);
+    gain.gain.linearRampToValueAtTime(0, t + HORN.noise.dur);
+    src.connect(bp).connect(gain).connect(hornBus);
+    src.start(t);
+    src.onended = () => { src.disconnect(); bp.disconnect(); gain.disconnect(); };
+  }
+
   function horn() {
     if (!ctx) return;
     // 連打されても音が積み重ならないようにする。重なると割れて変な音になる
@@ -169,6 +204,7 @@ export function createAudio() {
     // つぶす前の段階では振幅を大きめに入れる。ここでの差が音色のざらつきになる
     hornNote(a, 0.5);
     hornNote(b, 0.38);
+    hornNoise();
   }
 
   // 衝突: サイン波が 600Hz -> 300Hz に下がる(DESIGN.md 10章)
