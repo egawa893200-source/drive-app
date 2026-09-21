@@ -5,8 +5,16 @@
 const BASE = 'assets/img';
 
 // DESIGN.md 13.2 の表。dir は保存先、shape はプレースホルダーの形。
-// 場面が増えるとき(段階7)と障害物(段階6)で、その都度ここに足していく。
+// 場面が増えるとき(段階7)に、その都度ここに足していく。
 const CATALOG = {
+  // 障害物: 色つきの円
+  puddle: { dir: 'obstacle', shape: 'circle', color: '#7FC4E8' },
+  leaves: { dir: 'obstacle', shape: 'circle', color: '#E08A3C' },
+  frog: { dir: 'obstacle', shape: 'circle', color: '#5FAE52' },
+  ball: { dir: 'obstacle', shape: 'circle', color: '#E8584F' },
+  ducks: { dir: 'obstacle', shape: 'circle', color: '#F0C63E' },
+  turtle: { dir: 'obstacle', shape: 'circle', color: '#4E8A5A' },
+
   // 道ばた(全場面共通): 緑の円+茶色の棒
   tree_round: { dir: 'roadside', shape: 'tree', color: '#4E9A4A' },
   tree_tall: { dir: 'roadside', shape: 'tree', color: '#3F8A46' },
@@ -49,6 +57,12 @@ const SHAPES = {
   block(ctx, x, y, w, h, color) {
     ctx.fillStyle = color;
     roundRect(ctx, x, y, w, h, Math.min(w, h) * 0.18);
+  },
+  circle(ctx, x, y, w, h, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
   },
   dome(ctx, x, y, w, h, color) {
     ctx.fillStyle = color;

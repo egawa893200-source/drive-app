@@ -30,6 +30,7 @@ export function createDebug(enabled) {
       `gx ${num(info.gx, 2)}  gy ${num(info.gy, 2)}`,
       `audio ${info.audio ? 'on' : 'off'}  scene ${info.scene || '-'}`,
       `assets ${info.assets ? `${info.assets.loaded}/${info.assets.requested}` : '-'}`,
+      `obs ${info.obstacle ? `${info.obstacle.name} x${num(info.obstacle.x, 2)} ${info.obstacle.state}` : '-'}`,
       // safe area は段階8で足す
     ];
   }

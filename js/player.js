@@ -53,9 +53,14 @@ export function drawCar(ctx, cx, cy, size, rollDeg = 0) {
   ctx.restore();
 }
 
+// 衝突したときの跳ね(DESIGN.md 7.3)
+const BOUNCE_SEC = 0.3;
+const BOUNCE_RATIO = 0.16;   // 車の幅に対する跳ねの高さ
+
 export function createPlayer() {
   let x = 0;        // 道路座標 [-1, 1]
   let roll = 0;     // 見た目の傾き(度)
+  let bounceT = -1; // 跳ねの経過秒。-1 は跳ねていない
 
   function width(W, H) {
     return CFG.CAR_WIDTH_RATIO * Math.min(W, H);
@@ -80,19 +85,34 @@ export function createPlayer() {
     // 動いている向きに合わせて少しだけ傾ける
     const rate = dt > 0 ? clamp(move / dt / CFG.LATERAL_SPEED, -1, 1) : 0;
     roll += (rate * CFG.ROLL_MAX_DEG - roll) * follow;
+
+    if (bounceT >= 0) {
+      bounceT += dt;
+      if (bounceT > BOUNCE_SEC) bounceT = -1;
+    }
+  }
+
+  // 障害物に当たったとき。0.3秒で上に少し跳ねて戻る(DESIGN.md 7.3)。
+  // 速度は落とさないし、止めもしない(DESIGN.md 9章、18章)
+  function bounce() {
+    bounceT = 0;
   }
 
   // carLine: その高さでの道の中心と幅(road.js が返す)
   function draw(ctx, W, H, carLine) {
     const w = width(W, H);
     const cx = carLine.x + x * carLine.w;
-    const cy = H * CFG.CAR_SCREEN_Y_RATIO - w / 2;   // CAR_SCREEN_Y_RATIO は下端
+    const lift = bounceT >= 0
+      ? Math.sin(Math.PI * (bounceT / BOUNCE_SEC)) * w * BOUNCE_RATIO
+      : 0;
+    const cy = H * CFG.CAR_SCREEN_Y_RATIO - w / 2 - lift;   // CAR_SCREEN_Y_RATIO は下端
     drawCar(ctx, cx, cy, w, roll);
   }
 
   return {
     update,
     draw,
+    bounce,
     limitFor,
     get x() { return x; },
     get roll() { return roll; },

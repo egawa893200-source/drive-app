@@ -173,11 +173,37 @@ export function createRoad() {
     drawItem(ctx, item.name, x, y, w, h);
   }
 
+  // 平坦な直線で、自車の高さに対応する投影の倍率
+  function carLineScale() {
+    return (CFG.CAR_SCREEN_Y_RATIO - CFG.HORIZON_RATIO) * 2 / CFG.CAMERA_HEIGHT;
+  }
+
   // 平坦な直線での、自車の高さにおける道幅の半分(画素)。
   // カーブや丘で毎フレーム変わらない値なので、自車の可動範囲を決めるのに使う
   function carLineHalfWidth(W) {
-    const scale = (CFG.CAR_SCREEN_Y_RATIO - CFG.HORIZON_RATIO) * 2 / CFG.CAMERA_HEIGHT;
-    return scale * CFG.ROAD_HALF_WIDTH * W / 2;
+    return carLineScale() * CFG.ROAD_HALF_WIDTH * W / 2;
+  }
+
+  // カメラから自車の見かけの位置までの奥行き。当たり判定の基準になる
+  function carLineDistance() {
+    return CAMERA_DEPTH / carLineScale();
+  }
+
+  // 任意の奥行きの点を、区間の投影から補間して求める。
+  // render() が投影を更新したあとに呼ぶこと
+  function sampleAt(z) {
+    const wrapped = ((z % length) + length) % length;
+    const seg = segmentAt(wrapped);
+    const t = (wrapped % SEG) / SEG;
+    const p1 = seg.p1.screen;
+    const p2 = seg.p2.screen;
+    return {
+      visible: seg.p1.camera.z > CAMERA_DEPTH,
+      x: p1.x + (p2.x - p1.x) * t,
+      y: p1.y + (p2.y - p1.y) * t,
+      w: p1.w + (p2.w - p1.w) * t,
+      clip: seg.clip,
+    };
   }
 
   // 自車の高さでの道の中心と幅。描画のたびに更新する(DESIGN.md 7.3)
@@ -254,5 +280,13 @@ export function createRoad() {
     return segmentAt(z).curve;
   }
 
-  return { length, render, carLineHalfWidth, placeItems, curveAt };
+  return {
+    length,
+    render,
+    carLineHalfWidth,
+    carLineDistance,
+    sampleAt,
+    placeItems,
+    curveAt,
+  };
 }

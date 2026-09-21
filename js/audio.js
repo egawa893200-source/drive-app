@@ -27,6 +27,10 @@ const HORN_NOTES = [
   [262, 330],
 ];
 
+// 衝突と回避(DESIGN.md 10章)。どちらもやわらかい音にする
+const CRASH = { gain: 0.10, from: 600, to: 300, fall: 0.2, tail: 0.3 };
+const DODGE = { gain: 0.055, notes: [523, 659, 784], step: 0.07, dur: 0.16 };
+
 // tanh でやわらかくつぶす。角が立ちすぎないディストーション
 function driveCurve(drive) {
   const n = 1024;
@@ -167,10 +171,50 @@ export function createAudio() {
     hornNote(b, 0.38);
   }
 
+  // 衝突: サイン波が 600Hz -> 300Hz に下がる(DESIGN.md 10章)
+  function crash() {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(CRASH.from, t);
+    osc.frequency.linearRampToValueAtTime(CRASH.to, t + CRASH.fall);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(CRASH.gain, t + 0.02);
+    gain.gain.linearRampToValueAtTime(0, t + CRASH.tail);
+    osc.connect(gain).connect(master);
+    osc.start(t);
+    osc.stop(t + CRASH.tail + 0.02);
+    osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+  }
+
+  // 回避: 三角波で上昇する3音のアルペジオ(DESIGN.md 10章)
+  function dodge() {
+    if (!ctx) return;
+    const t0 = ctx.currentTime;
+    DODGE.notes.forEach((freq, i) => {
+      const t = t0 + i * DODGE.step;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(DODGE.gain, t + 0.012);
+      gain.gain.linearRampToValueAtTime(0, t + DODGE.dur);
+      osc.connect(gain).connect(master);
+      osc.start(t);
+      osc.stop(t + DODGE.dur + 0.02);
+      osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+    });
+  }
+
   return {
     start,
     setWind,
     horn,
+    crash,
+    dodge,
     get ready() { return ctx !== null; },
   };
 }
