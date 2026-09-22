@@ -40,6 +40,25 @@ function between(a, b) {
   return a + Math.random() * (b - a);
 }
 
+// BGM(DESIGN.md 10章)。場面ごとに1つ、ペンタトニックの短いアルペジオを
+// 90BPMでループ。場面が変わる間は2曲を混ぜる
+const BGM = {
+  gain: 0.04,
+  bpm: 90,
+  stepsPerBeat: 2,          // 8分音符
+  lookahead: 0.3,           // 何秒先まで予約しておくか
+  noteDur: 0.42,
+  scale: [0, 2, 4, 7, 9],   // ペンタトニック
+  pattern: [0, 2, 1, 4, 2, 3, 1, 2],
+};
+
+const BGM_SCENES = {
+  meadow: { root: 392.00, type: 'triangle' },
+  sea: { root: 349.23, type: 'sine' },
+  town: { root: 329.63, type: 'triangle' },
+  night: { root: 261.63, type: 'sine' },
+};
+
 // 衝突と回避(DESIGN.md 10章)。どちらもやわらかい音にする
 const CRASH = { gain: 0.10, from: 600, to: 300, fall: 0.2, tail: 0.3 };
 const DODGE = { gain: 0.055, notes: [523, 659, 784], step: 0.07, dur: 0.16 };
@@ -62,6 +81,12 @@ export function createAudio() {
   let windGain = null;
   let hornBus = null;
   let lastHornAt = -Infinity;   // 0 にすると、開いた直後の1回目が連打扱いで消える
+  let bgmA = null;              // 今の場面の曲
+  let bgmB = null;              // 次の場面の曲(切り替え中だけ鳴る)
+  let bgmStep = 0;
+  let bgmNextTime = 0;
+  let bgmFrom = 'meadow';
+  let bgmTo = 'meadow';
 
   function buildEngine() {
     const osc = ctx.createOscillator();
@@ -161,6 +186,12 @@ export function createAudio() {
     buildEngine();
     buildWind();
     buildHorn();
+    bgmA = ctx.createGain();
+    bgmA.gain.value = BGM.gain;
+    bgmA.connect(master);
+    bgmB = ctx.createGain();
+    bgmB.gain.value = 0;
+    bgmB.connect(master);
     ctx.resume();
   }
 
@@ -241,6 +272,47 @@ export function createAudio() {
     }
   }
 
+  // BGMの1音
+  function bgmNote(sceneId, degree, at, out) {
+    const scene = BGM_SCENES[sceneId];
+    if (!scene) return;
+    const osc = ctx.createOscillator();
+    osc.type = scene.type;
+    osc.frequency.value = scene.root * Math.pow(2, BGM.scale[degree] / 12);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(1, at + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, at + BGM.noteDur);
+    osc.connect(gain).connect(out);
+    osc.start(at);
+    osc.stop(at + BGM.noteDur + 0.02);
+    osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+  }
+
+  // 場面(と切り替えの進み具合)を伝える。曲を混ぜる比を変える
+  function setScene(from, to, k) {
+    if (!ctx) return;
+    bgmFrom = from;
+    bgmTo = to;
+    const t = ctx.currentTime;
+    bgmA.gain.setTargetAtTime((1 - k) * BGM.gain, t, 0.3);
+    bgmB.gain.setTargetAtTime((from === to ? 0 : k) * BGM.gain, t, 0.3);
+  }
+
+  // 毎フレーム呼ぶ。少し先の音を予約しておく
+  function updateMusic() {
+    if (!ctx) return;
+    const step = 60 / BGM.bpm / BGM.stepsPerBeat;
+    if (bgmNextTime === 0) bgmNextTime = ctx.currentTime + 0.1;
+    while (bgmNextTime < ctx.currentTime + BGM.lookahead) {
+      const degree = BGM.pattern[bgmStep % BGM.pattern.length];
+      bgmNote(bgmFrom, degree, bgmNextTime, bgmA);
+      if (bgmTo !== bgmFrom) bgmNote(bgmTo, degree, bgmNextTime, bgmB);
+      bgmNextTime += step;
+      bgmStep++;
+    }
+  }
+
   // 衝突: サイン波が 600Hz -> 300Hz に下がる(DESIGN.md 10章)
   function crash() {
     if (!ctx) return;
@@ -285,6 +357,8 @@ export function createAudio() {
     horn,
     crash,
     dodge,
+    setScene,
+    updateMusic,
     get ready() { return ctx !== null; },
   };
 }

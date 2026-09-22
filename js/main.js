@@ -1,5 +1,5 @@
 // 起動とメインループ(DESIGN.md 11章)。
-// 段階6では START → PLAY まで。一時停止・復帰と wake lock は段階8。
+// 段階7では START → PLAY まで。一時停止・復帰と wake lock は段階8。
 import { CFG } from './config.js';
 import { createRoad } from './road.js';
 import { createPlayer, drawCar } from './player.js';
@@ -91,8 +91,12 @@ function frame(now) {
     scenery.update(dt, position, lastPosition);
     obstacles.update(dt, moved, player.x, true);
 
+    const scene = scenery.scene;
+    audio.setScene(scene.from, scene.to, scene.k);
+    audio.updateMusic();
+
     scenery.drawBackground(ctx, W, H);
-    const carLine = road.render(ctx, W, H, position, assets.draw);
+    const carLine = road.render(ctx, W, H, position, assets.draw, scenery.grassColor());
     obstacles.draw(ctx, W, H, position);
     player.draw(ctx, W, H, carLine);
   }
@@ -104,7 +108,7 @@ function frame(now) {
       steer,
       playerX: player.x,
       audio: audio.ready,
-      scene: scenery.sceneId,
+      scene: scenery.scene,
       assets: assets.stats(),
       obstacle: obstacles.info,
     });

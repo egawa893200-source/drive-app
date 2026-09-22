@@ -28,7 +28,9 @@ export function createDebug(enabled) {
       `steer ${num(info.steer, 2)}  x ${num(info.playerX, 2)}`,
       `gyro ${info.gyro ? 'on' : 'off'}  rot ${num(info.rotation, 0)}`,
       `gx ${num(info.gx, 2)}  gy ${num(info.gy, 2)}`,
-      `audio ${info.audio ? 'on' : 'off'}  scene ${info.scene || '-'}`,
+      `audio ${info.audio ? 'on' : 'off'}  scene ${info.scene
+        ? (info.scene.k > 0 ? `${info.scene.from}>${info.scene.to} ${num(info.scene.k, 2)}` : info.scene.from)
+        : '-'}`,
       `assets ${info.assets ? `${info.assets.loaded}/${info.assets.requested}` : '-'}`,
       `obs ${info.obstacle ? `${info.obstacle.name} x${num(info.obstacle.x, 2)} ${info.obstacle.state}` : '-'}`,
       // safe area は段階8で足す
