@@ -5,8 +5,16 @@
 const BASE = 'assets/img';
 
 // DESIGN.md 13.2 の表。dir は保存先、shape はプレースホルダーの形。
-// 場面が増えるとき(段階7)と障害物(段階6)で、その都度ここに足していく。
+// 場面が増えるとき(段階7)に、その都度ここに足していく。
 const CATALOG = {
+  // 障害物: 色つきの円
+  puddle: { dir: 'obstacle', shape: 'circle', color: '#7FC4E8' },
+  leaves: { dir: 'obstacle', shape: 'circle', color: '#E08A3C' },
+  frog: { dir: 'obstacle', shape: 'circle', color: '#5FAE52' },
+  ball: { dir: 'obstacle', shape: 'circle', color: '#E8584F' },
+  ducks: { dir: 'obstacle', shape: 'circle', color: '#F0C63E' },
+  turtle: { dir: 'obstacle', shape: 'circle', color: '#4E8A5A' },
+
   // 道ばた(全場面共通): 緑の円+茶色の棒
   tree_round: { dir: 'roadside', shape: 'tree', color: '#4E9A4A' },
   tree_tall: { dir: 'roadside', shape: 'tree', color: '#3F8A46' },
@@ -19,10 +27,33 @@ const CATALOG = {
   barn: { dir: 'meadow', shape: 'block', color: '#C4543F' },
   balloon: { dir: 'meadow', shape: 'block', color: '#F2A03D' },
 
+  // 昼の海沿い
+  palm: { dir: 'sea', shape: 'tree', color: '#4FA05A' },
+  lighthouse: { dir: 'sea', shape: 'block', color: '#E8584F' },
+  yacht: { dir: 'sea', shape: 'block', color: '#F2F2EC' },
+  seagull: { dir: 'sea', shape: 'block', color: '#F7F7F2' },
+
+  // 夕方の街
+  building_a: { dir: 'town', shape: 'block', color: '#8FC3DE' },
+  building_b: { dir: 'town', shape: 'block', color: '#EFE3C8' },
+  signal: { dir: 'town', shape: 'block', color: '#5A6070' },
+  house: { dir: 'town', shape: 'block', color: '#E0A868' },
+
+  // 夜の山道。黒くしすぎず形が分かる程度に落とす
+  pine: { dir: 'night', shape: 'tree', color: '#2F5E44' },
+  owl: { dir: 'night', shape: 'block', color: '#8A7A5E' },
+  streetlamp: { dir: 'night', shape: 'block', color: '#F0D68A' },
+  moon: { dir: 'night', shape: 'block', color: '#F5E9A8' },
+
   // 遠景: 半円
   mountain_a: { dir: 'far', shape: 'dome', color: '#6FA86A' },
   mountain_b: { dir: 'far', shape: 'dome', color: '#5E9A5E' },
+  island: { dir: 'far', shape: 'dome', color: '#6BA870' },
   cloud: { dir: 'far', shape: 'dome', color: '#FFFFFF' },
+  city_a: { dir: 'far', shape: 'dome', color: '#9A8FA8' },
+  city_b: { dir: 'far', shape: 'dome', color: '#8A8098' },
+  mountain_night_a: { dir: 'far', shape: 'dome', color: '#2A3768' },
+  mountain_night_b: { dir: 'far', shape: 'dome', color: '#222E59' },
 };
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -49,6 +80,12 @@ const SHAPES = {
   block(ctx, x, y, w, h, color) {
     ctx.fillStyle = color;
     roundRect(ctx, x, y, w, h, Math.min(w, h) * 0.18);
+  },
+  circle(ctx, x, y, w, h, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
   },
   dome(ctx, x, y, w, h, color) {
     ctx.fillStyle = color;

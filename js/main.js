@@ -1,5 +1,5 @@
 // 起動とメインループ(DESIGN.md 11章)。
-// 段階5では START → PLAY まで。一時停止・復帰と wake lock は段階8。
+// 段階7では START → PLAY まで。一時停止・復帰と wake lock は段階8。
 import { CFG } from './config.js';
 import { createRoad } from './road.js';
 import { createPlayer, drawCar } from './player.js';
@@ -7,6 +7,7 @@ import { createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { createAssets } from './assets.js';
 import { createScenery } from './scenery.js';
+import { createObstacles } from './obstacles.js';
 import { createDebug } from './debug.js';
 
 const START = 'start';
@@ -22,6 +23,8 @@ const assets = createAssets();
 const scenery = createScenery(assets, road);
 const player = createPlayer();
 const audio = createAudio();
+// 「障害物なし」の設定は段階8。それまでは常にあり(DESIGN.md 9章の初期値)
+const obstacles = createObstacles(assets, road, audio, () => player.bounce());
 const input = createInput(canvas, () => {
   if (state === PLAY) audio.horn();
 });
@@ -82,12 +85,19 @@ function frame(now) {
     player.update(dt, steer, xLimit);
     audio.setWind(Math.abs(steer));
 
+    const moved = CFG.SPEED.normal * dt;
     const lastPosition = position;
-    position = (position + CFG.SPEED.normal * dt) % road.length;
+    position = (position + moved) % road.length;
     scenery.update(dt, position, lastPosition);
+    obstacles.update(dt, moved, player.x, true);
+
+    const scene = scenery.scene;
+    audio.setScene(scene.from, scene.to, scene.k);
+    audio.updateMusic();
 
     scenery.drawBackground(ctx, W, H);
-    const carLine = road.render(ctx, W, H, position, assets.draw);
+    const carLine = road.render(ctx, W, H, position, assets.draw, scenery.grassColor());
+    obstacles.draw(ctx, W, H, position);
     player.draw(ctx, W, H, carLine);
   }
 
@@ -98,8 +108,9 @@ function frame(now) {
       steer,
       playerX: player.x,
       audio: audio.ready,
-      scene: scenery.sceneId,
+      scene: scenery.scene,
       assets: assets.stats(),
+      obstacle: obstacles.info,
     });
     debug.draw(ctx, W, H);
   }

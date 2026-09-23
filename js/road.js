@@ -120,12 +120,12 @@ export function createRoad() {
     return seg.p1.world.y + (seg.p2.world.y - seg.p1.world.y) * t;
   }
 
-  function drawSegment(ctx, W, seg, dark) {
+  function drawSegment(ctx, W, seg, dark, grass) {
     const p1 = seg.p1.screen;
     const p2 = seg.p2.screen;
 
     // 草地。手前から奥へ描くので、区間ごとに帯で塗りつぶしてよい
-    ctx.fillStyle = COLORS.GRASS;
+    ctx.fillStyle = grass;
     ctx.fillRect(0, p2.y, W, p1.y - p2.y);
 
     // 路面。RUMBLE_SEGMENTS ごとに濃淡2色の縞になる
@@ -173,17 +173,44 @@ export function createRoad() {
     drawItem(ctx, item.name, x, y, w, h);
   }
 
+  // 平坦な直線で、自車の高さに対応する投影の倍率
+  function carLineScale() {
+    return (CFG.CAR_SCREEN_Y_RATIO - CFG.HORIZON_RATIO) * 2 / CFG.CAMERA_HEIGHT;
+  }
+
   // 平坦な直線での、自車の高さにおける道幅の半分(画素)。
   // カーブや丘で毎フレーム変わらない値なので、自車の可動範囲を決めるのに使う
   function carLineHalfWidth(W) {
-    const scale = (CFG.CAR_SCREEN_Y_RATIO - CFG.HORIZON_RATIO) * 2 / CFG.CAMERA_HEIGHT;
-    return scale * CFG.ROAD_HALF_WIDTH * W / 2;
+    return carLineScale() * CFG.ROAD_HALF_WIDTH * W / 2;
+  }
+
+  // カメラから自車の見かけの位置までの奥行き。当たり判定の基準になる
+  function carLineDistance() {
+    return CAMERA_DEPTH / carLineScale();
+  }
+
+  // 任意の奥行きの点を、区間の投影から補間して求める。
+  // render() が投影を更新したあとに呼ぶこと
+  function sampleAt(z) {
+    const wrapped = ((z % length) + length) % length;
+    const seg = segmentAt(wrapped);
+    const t = (wrapped % SEG) / SEG;
+    const p1 = seg.p1.screen;
+    const p2 = seg.p2.screen;
+    return {
+      visible: seg.p1.camera.z > CAMERA_DEPTH,
+      x: p1.x + (p2.x - p1.x) * t,
+      y: p1.y + (p2.y - p1.y) * t,
+      w: p1.w + (p2.w - p1.w) * t,
+      clip: seg.clip,
+    };
   }
 
   // 自車の高さでの道の中心と幅。描画のたびに更新する(DESIGN.md 7.3)
   const carLine = { x: 0, w: 0 };
 
-  function render(ctx, W, H, position, drawItem) {
+  // grass: 場面ごとの草地の色(scenery.js が決める)
+  function render(ctx, W, H, position, drawItem, grass = COLORS.GRASS) {
     const base = segmentAt(position);
     const basePercent = (position % SEG) / SEG;
     const cameraY = CFG.CAMERA_HEIGHT + roadYAt(position);
@@ -224,7 +251,7 @@ export function createRoad() {
       if (seg.p2.screen.y >= seg.p1.screen.y) continue;     // 裏を向いている
       if (seg.p2.screen.y >= maxY) continue;                // すでに描いた丘の陰
 
-      drawSegment(ctx, W, seg, Math.floor(seg.index / CFG.RUMBLE_SEGMENTS) % 2 === 0);
+      drawSegment(ctx, W, seg, Math.floor(seg.index / CFG.RUMBLE_SEGMENTS) % 2 === 0, grass);
       maxY = seg.p2.screen.y;
     }
 
@@ -241,12 +268,10 @@ export function createRoad() {
     return carLine;
   }
 
-  // 道ばたの物を置く。place(index) が item の配列(または null)を返す
-  function placeItems(place) {
-    for (const seg of segments) {
-      const items = place(seg.index);
-      seg.items = items || [];
-    }
+  // 道ばたの物を1区間ぶん置き換える。場面が変わっても、すでに出ている物は
+  // そのまま流れていくように、手前から順に入れ替えていく(DESIGN.md 8.1)
+  function setItems(index, items) {
+    segments[((index % segments.length) + segments.length) % segments.length].items = items || [];
   }
 
   // その地点のカーブ量。遠景の横ずれに使う(DESIGN.md 8.2)
@@ -254,5 +279,15 @@ export function createRoad() {
     return segmentAt(z).curve;
   }
 
-  return { length, render, carLineHalfWidth, placeItems, curveAt };
+  return {
+    length,
+    render,
+    carLineHalfWidth,
+    carLineDistance,
+    sampleAt,
+    setItems,
+    curveAt,
+    segmentCount: segments.length,
+    segmentLength: SEG,
+  };
 }
