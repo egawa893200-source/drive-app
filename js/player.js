@@ -2,8 +2,13 @@
 import { CFG } from './config.js';
 
 // 素材が無いときのプレースホルダー: 角丸四角+黒いタイヤ2つ(DESIGN.md 13.2)。
-// 段階5で assets.js の画像に差し替える
-const BODY = '#F24E4E';
+// 素材があれば assets.js の画像を使う
+const BODY = {
+  red: '#F24E4E',
+  blue: '#4A90E2',
+  yellow: '#F5C542',
+  white: '#F7F7F2',
+};
 const GLASS = '#CDEBFA';
 const TYRE = '#2E2E33';
 const LAMP = '#F2F2EC';
@@ -25,7 +30,7 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 // 原点を自車の中心として、真後ろから見た車を描く
-function drawPlaceholder(ctx, w, h) {
+function drawPlaceholder(ctx, w, h, body) {
   const x = -w / 2;
   const y = -h / 2;
 
@@ -33,7 +38,7 @@ function drawPlaceholder(ctx, w, h) {
   roundRect(ctx, x + w * 0.04, y + h * 0.62, w * 0.24, h * 0.30, w * 0.07);
   roundRect(ctx, x + w * 0.72, y + h * 0.62, w * 0.24, h * 0.30, w * 0.07);
 
-  ctx.fillStyle = BODY;
+  ctx.fillStyle = body;
   roundRect(ctx, x, y + h * 0.16, w, h * 0.68, w * 0.16);
 
   ctx.fillStyle = GLASS;
@@ -44,12 +49,18 @@ function drawPlaceholder(ctx, w, h) {
   roundRect(ctx, x + w * 0.80, y + h * 0.62, w * 0.14, h * 0.12, w * 0.05);
 }
 
-// 中心 (cx, cy) に、一辺 size の車を描く。起動画面でも使う
-export function drawCar(ctx, cx, cy, size, rollDeg = 0) {
+// 中心 (cx, cy) に、一辺 size の車を描く。起動画面でも使う。
+// assets を渡すと、素材があればそれを使う(DESIGN.md 13.1)
+export function drawCar(ctx, cx, cy, size, rollDeg = 0, color = 'red', assets = null) {
   ctx.save();
   ctx.translate(cx, cy);
   if (rollDeg) ctx.rotate(rollDeg * Math.PI / 180);
-  drawPlaceholder(ctx, size, size);
+  const image = assets && assets.get(`car_${color}`);
+  if (image) {
+    ctx.drawImage(image, -size / 2, -size / 2, size, size);
+  } else {
+    drawPlaceholder(ctx, size, size, BODY[color] || BODY.red);
+  }
   ctx.restore();
 }
 
@@ -57,7 +68,8 @@ export function drawCar(ctx, cx, cy, size, rollDeg = 0) {
 const BOUNCE_SEC = 0.3;
 const BOUNCE_RATIO = 0.16;   // 車の幅に対する跳ねの高さ
 
-export function createPlayer() {
+export function createPlayer(assets) {
+  let color = 'red';
   let x = 0;        // 道路座標 [-1, 1]
   let roll = 0;     // 見た目の傾き(度)
   let bounceT = -1; // 跳ねの経過秒。-1 は跳ねていない
@@ -108,7 +120,7 @@ export function createPlayer() {
       ? Math.sin(Math.PI * (bounceT / BOUNCE_SEC)) * w * BOUNCE_RATIO
       : 0;
     const cy = H * CFG.CAR_SCREEN_Y_RATIO - w / 2 - lift;   // CAR_SCREEN_Y_RATIO は下端
-    drawCar(ctx, cx, cy, w, roll);
+    drawCar(ctx, cx, cy, w, roll, color, assets);
   }
 
   return {
@@ -116,6 +128,7 @@ export function createPlayer() {
     draw,
     bounce,
     limitFor,
+    setColor(v) { color = v; },
     get x() { return x; },
     get roll() { return roll; },
   };

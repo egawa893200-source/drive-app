@@ -89,3 +89,112 @@ body {
   transform: translateY(2px);
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.15);
 }
+
+/* 起動画面と設定画面は、論理座標での余白の内側に置く(DESIGN.md 6章)。
+   下端のホームバー付近には操作要素を置かない */
+#start {
+  padding-bottom: calc(8% + var(--inset-bottom, 0px));
+}
+
+/* 大人向け設定(DESIGN.md 14章)。ボタンは大きく、文字ありでよい */
+#settings {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 24, 32, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: system-ui, -apple-system, sans-serif;
+  padding: calc(8px + var(--inset-top, 0px)) calc(8px + var(--inset-right, 0px))
+           calc(8px + var(--inset-bottom, 0px)) calc(8px + var(--inset-left, 0px));
+  box-sizing: border-box;
+}
+
+#settings[hidden] {
+  display: none;
+}
+
+#settingsPanel {
+  width: 100%;
+  max-width: 660px;
+  max-height: 100%;
+  overflow-y: auto;
+  touch-action: pan-y;
+  background: #F7F7F2;
+  border-radius: 18px;
+  padding: 12px 16px;
+  box-sizing: border-box;
+}
+
+/* 横長の画面なので2列に並べる。スクロールしなくても
+   「閉じる」に手が届くようにするため */
+#settingsPanel .rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 18px;
+}
+
+#settingsPanel .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid #E2E2DA;
+}
+
+#settingsPanel .label {
+  font-size: 14px;
+  color: #2E2E33;
+  white-space: nowrap;
+  width: 84px;
+  flex: none;
+}
+
+#settingsPanel .opts {
+  display: flex;
+  gap: 5px;
+  flex: 1;
+}
+
+#settingsPanel .opts button {
+  font: inherit;
+  font-size: 14px;
+  flex: 1;
+  min-width: 44px;
+  min-height: 42px;
+  padding: 0 4px;
+  color: #2E2E33;
+  background: #E6E6DE;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+#settingsPanel .opts button.on {
+  background: #7EC8F0;
+  border-color: #3F8FC0;
+  font-weight: 700;
+}
+
+#settingsPanel .actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+#settingsPanel .actions button {
+  font: inherit;
+  font-size: 16px;
+  flex: 1;
+  min-height: 46px;
+  color: #2E2E33;
+  background: #E6E6DE;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+#settingsPanel .actions #closeSettings {
+  background: #7EC8F0;
+  font-weight: 700;
+}

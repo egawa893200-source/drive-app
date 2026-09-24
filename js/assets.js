@@ -7,6 +7,12 @@ const BASE = 'assets/img';
 // DESIGN.md 13.2 の表。dir は保存先、shape はプレースホルダーの形。
 // 場面が増えるとき(段階7)に、その都度ここに足していく。
 const CATALOG = {
+  // 自車。素材が無いときは player.js が図形で描く
+  car_red: { dir: 'car', shape: 'block', color: '#F24E4E' },
+  car_blue: { dir: 'car', shape: 'block', color: '#4A90E2' },
+  car_yellow: { dir: 'car', shape: 'block', color: '#F5C542' },
+  car_white: { dir: 'car', shape: 'block', color: '#F7F7F2' },
+
   // 障害物: 色つきの円
   puddle: { dir: 'obstacle', shape: 'circle', color: '#7FC4E8' },
   leaves: { dir: 'obstacle', shape: 'circle', color: '#E08A3C' },
