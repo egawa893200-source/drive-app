@@ -59,6 +59,12 @@ const BGM_SCENES = {
   night: { root: 261.63, type: 'sine' },
 };
 
+// 鳥の鳴き声(DESIGN.md 20章)。短く上がって下がるのを2回。
+// 高い音なので、耳に刺さらないよう音量は小さめにする
+// delay: クラクションの1回目とぶつからないよう、少し遅らせて鳴らす。
+// 驚いた鳥があとから鳴く感じになり、音も聞き分けやすい
+const CHIRP = { gain: 0.045, from: [2100, 2500], rise: 1.35, dur: 0.09, gap: 0.13, delay: 0.25 };
+
 // 衝突と回避(DESIGN.md 10章)。どちらもやわらかい音にする
 const CRASH = { gain: 0.10, from: 600, to: 300, fall: 0.2, tail: 0.3 };
 const DODGE = { gain: 0.055, notes: [523, 659, 784], step: 0.07, dur: 0.16 };
@@ -256,12 +262,14 @@ export function createAudio() {
     };
   }
 
+  // 鳴らしたら true を返す。連打で間引いたときは false(DESIGN.md 20章)。
+  // 絵の反応は、音が本当に鳴ったときだけ返すため
   function horn() {
-    if (!ctx) return;
     // 連打されても音が積み重なりすぎないようにする
     const now = performance.now();
-    if (now - lastHornAt < HORN.minGapMs) return;
+    if (now - lastHornAt < HORN.minGapMs) return false;
     lastHornAt = now;
+    if (!ctx) return true;      // 音が出せない環境でも、絵は反応させる
 
     const n = HORN.honks[0]
       + Math.floor(Math.random() * (HORN.honks[1] - HORN.honks[0] + 1));
@@ -270,6 +278,29 @@ export function createAudio() {
       honk(at);
       at += between(HORN.gapSec[0], HORN.gapSec[1]);
     }
+    return true;
+  }
+
+  // 鳥の鳴き声(DESIGN.md 20章)
+  function chirp() {
+    if (!ctx) return;
+    const t0 = ctx.currentTime + CHIRP.delay;
+    CHIRP.from.forEach((freq, i) => {
+      const t = t0 + i * CHIRP.gap;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * CHIRP.rise, t + CHIRP.dur * 0.45);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.92, t + CHIRP.dur);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(CHIRP.gain, t + 0.012);
+      gain.gain.linearRampToValueAtTime(0, t + CHIRP.dur);
+      osc.connect(gain).connect(master);
+      osc.start(t);
+      osc.stop(t + CHIRP.dur + 0.02);
+      osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+    });
   }
 
   // BGMの1音
@@ -389,6 +420,7 @@ export function createAudio() {
     resume,
     setWind,
     horn,
+    chirp,
     crash,
     dodge,
     setScene,

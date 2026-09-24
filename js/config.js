@@ -49,6 +49,14 @@ export const CFG = {
   // 実機で上下が逆に見えたら -90 にする
   CANVAS_ROTATION: 90,
 
+  // クラクションへの反応(段階9、DESIGN.md 20章)
+  REACT_SEGMENTS: 60,          // 前方で反応する区間数。60区間 = 12000(約3秒先まで)
+  REACT_FLY_SEC: 1.6,          // 鳥が飛び去るまで
+  REACT_LOOK_SEC: 1.8,         // 動物がこちらを向いている時間
+  REACT_SWAY_SEC: 1.2,         // 木や草がゆれて止まるまで
+  REACT_SWAY_DEG: 10,          // ゆれの大きさ(度)。7度だと遠くの木で数pxしか動かず気づけない
+  REACT_CHIRP_GAP_SEC: 1.2,    // 鳴き声を続けて鳴らさない間隔
+
   // 時間処理
   MAX_DT: 0.05,
   MAX_DPR: 2,

@@ -150,7 +150,9 @@ export function createRoad() {
   }
 
   // 区間に紐づいた物を、その区間の投影に合わせて描く。
-  // 画像の下端中央を接地点にする(DESIGN.md 13.2)
+  // 画像の下端中央を接地点にする(DESIGN.md 13.2)。
+  // drawItem には名前ではなく物そのものを渡す。反応の途中かどうかで
+  // 描き方が変わるため(DESIGN.md 20章)
   function drawSprite(ctx, W, H, seg, item, drawItem) {
     const p = seg.p1.screen;
     const w = item.size * p.w;
@@ -166,11 +168,11 @@ export function createRoad() {
       ctx.beginPath();
       ctx.rect(0, 0, W, seg.clip);
       ctx.clip();
-      drawItem(ctx, item.name, x, y, w, h);
+      drawItem(ctx, item, x, y, w, h);
       ctx.restore();
       return;
     }
-    drawItem(ctx, item.name, x, y, w, h);
+    drawItem(ctx, item, x, y, w, h);
   }
 
   // 平坦な直線で、自車の高さに対応する投影の倍率
@@ -270,6 +272,15 @@ export function createRoad() {
 
   // 道ばたの物を1区間ぶん置き換える。場面が変わっても、すでに出ている物は
   // そのまま流れていくように、手前から順に入れ替えていく(DESIGN.md 8.1)
+  // 自車の前方 count 区間ぶんの物を順に渡す(DESIGN.md 20章)
+  function forEachItemAhead(position, count, fn) {
+    const base = segmentAt(position);
+    for (let n = 0; n < count; n++) {
+      const seg = segments[(base.index + n) % segments.length];
+      for (const item of seg.items) fn(item);
+    }
+  }
+
   function setItems(index, items) {
     segments[((index % segments.length) + segments.length) % segments.length].items = items || [];
   }
@@ -286,6 +297,7 @@ export function createRoad() {
     carLineDistance,
     sampleAt,
     setItems,
+    forEachItemAhead,
     curveAt,
     segmentCount: segments.length,
     segmentLength: SEG,
