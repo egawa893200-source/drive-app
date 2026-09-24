@@ -11,11 +11,17 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<!-- 子どもが見る画面には文字を出さない(DESIGN.md 18章)。
-     起動画面だけは大人が操作するので文字を出してよい(DESIGN.md 11章) -->
-<canvas id="stage"></canvas>
-<div id="start">
-  <button id="startButton" type="button">はじめる</button>
+<!-- 画面の余白(ノッチ・ホームバー)を測るためだけの要素。目には見えない -->
+<div id="safearea" aria-hidden="true"></div>
+
+<!-- 縦持ちのときは、この箱ごと回して横画面にする(DESIGN.md 6章) -->
+<div id="stage">
+  <!-- 子どもが見る画面には文字を出さない(DESIGN.md 18章)。
+       起動画面だけは大人が操作するので文字を出してよい(DESIGN.md 11章) -->
+  <canvas id="canvas"></canvas>
+  <div id="start">
+    <button id="startButton" type="button">はじめる</button>
+  </div>
 </div>
 <script type="module" src="js/main.js"></script>
 </body>

@@ -33,7 +33,9 @@ export function createDebug(enabled) {
         : '-'}`,
       `assets ${info.assets ? `${info.assets.loaded}/${info.assets.requested}` : '-'}`,
       `obs ${info.obstacle ? `${info.obstacle.name} x${num(info.obstacle.x, 2)} ${info.obstacle.state}` : '-'}`,
-      // safe area は段階8で足す
+      `safe L${num(info.inset && info.inset.left, 0)} R${num(info.inset && info.inset.right, 0)}`
+        + ` T${num(info.inset && info.inset.top, 0)} B${num(info.inset && info.inset.bottom, 0)}`
+        + `  limit ${num(info.limit, 2)}`,
     ];
   }
 

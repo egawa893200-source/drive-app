@@ -66,11 +66,13 @@ export function createPlayer() {
     return CFG.CAR_WIDTH_RATIO * Math.min(W, H);
   }
 
-  // 自車の左右端が画面に収まるように CAR_X_LIMIT を実効的に狭める(DESIGN.md 6章)。
-  // safe area のぶんを差し引くのは段階8。
-  // 平坦な直線での道幅から決めるので、カーブや丘で可動範囲が動くことはない
-  function limitFor(W, H, roadHalfWidth) {
-    const room = (W / 2 - width(W, H) / 2) / roadHalfWidth;
+  // 自車の左右端が safe area の内側に収まるように CAR_X_LIMIT を実効的に
+  // 狭める(DESIGN.md 6章)。平坦な直線での道幅から決めるので、カーブや丘で
+  // 可動範囲が動くことはない。
+  // 左右で余白が違っても操作感が変わらないよう、広いほうに合わせる
+  function limitFor(W, H, roadHalfWidth, inset) {
+    const margin = inset ? Math.max(inset.left, inset.right) : 0;
+    const room = (W / 2 - margin - width(W, H) / 2) / roadHalfWidth;
     return Math.min(CFG.CAR_X_LIMIT, Math.max(0, room));
   }
 
