@@ -68,6 +68,8 @@
 │   ├── audio.js            BGM、効果音(Web Audio APIで生成)
 │   ├── settings.js         大人向け設定と保存
 │   ├── ending.js           おわりの演出
+│   ├── reactions.js        クラクションへの反応
+│   ├── crossing.js         踏切
 │   └── debug.js            デバッグ表示
 ├── assets/
 │   ├── img/                GPTで生成した素材(WebP)
@@ -335,6 +337,8 @@ BOOT → START → PLAY ⇄ PAUSED
 | car_red / car_blue / car_yellow / car_white | `assets/img/car/` | 自車(真後ろから、運転手が見える) | 角丸四角+黒いタイヤ2つ |
 | puddle, leaves, frog, ball, ducks, turtle | `assets/img/obstacle/` | 障害物 | 色つきの円 |
 | tree_round, tree_tall, bush, flowers | `assets/img/roadside/` | 全場面共通の道ばた | 緑の円+茶色の棒 |
+| bird, dog | `assets/img/roadside/` | クラクションに反応する生き物(20章) | 色つきの円 |
+| train, gate, bell | `assets/img/crossing/` | 踏切(21章) | 色つきの角丸四角 |
 | cow, windmill, barn, balloon | `assets/img/meadow/` | 草原(balloonは空) | 色つきの角丸四角 |
 | palm, lighthouse, yacht, seagull | `assets/img/sea/` | 海沿い(seagullは空、yachtは遠景) | 同上 |
 | building_a, building_b, signal, house | `assets/img/town/` | 街 | 同上 |
@@ -399,6 +403,8 @@ BOOT → START → PLAY ⇄ PAUSED
 | 6 | obstacles.js、衝突と回避の演出と音 | 中央にいると軽く当たり、傾けると避けられる。当たっても止まらない |
 | 7 | 4場面の切り替え、BGM | 60秒ごとに景色と曲がなめらかに変わる |
 | 8 | orientation.js(縦持ち回転・safe area)、一時停止と復帰、wake lock、settings.js、ending.js、PWA | 回転ロック中の縦持ちでも遊べる。ノッチに車が隠れない。アプリ切替から戻っても正常。ホーム画面から全画面で起動し、機内モードでも動く |
+| 9 | reactions.js(20章) | クラクションを鳴らすと、前方の木がゆれ、鳥が飛び立ち、動物がこちらを向く。連打しても動きが壊れない。反応の最中もカクつかない |
+| 10 | crossing.js(21章) | 走っていると踏切が現れ、カンカンの音のあとで電車が横切る。自車は止まらないし遅くならない |
 
 ## 18. やってはいけないこと
 
@@ -416,7 +422,35 @@ BOOT → START → PLAY ⇄ PAUSED
 
 ## 19. あとから足せる案(今は作らない)
 
-- トンネル、橋、踏切などの通過イベント
+- トンネル、橋などの通過イベント(踏切は21章にした)
 - 走った距離で増えていく動物
 - 雨や雪の天気
 - 車の種類を選ぶ画面
+
+## 20. クラクションへの反応(reactions.js)
+
+1歳半は「自分が押したから何かが起きた」が分かると喜ぶ。クラクションを鳴らしたとき、前方 `CFG.REACT_SEGMENTS` 区間ぶんの道ばたの物が、種類に応じて一度だけ反応する。
+
+| 反応 | 対象 | 動き | 長さ |
+| --- | --- | --- | --- |
+| fly | bird, owl | 上に飛び上がりながら薄くなって消える。鳴き声を1回だけ鳴らす | `REACT_FLY_SEC` |
+| look | cow, dog | ぴょこんと跳ねて、左右を反転させる(こちらを向く) | `REACT_LOOK_SEC` |
+| sway | 木・草・花・風車・ヤシ・松 | 下端を軸に左右へゆれて止まる(減衰) | `REACT_SWAY_SEC` |
+
+- 対象外の物(建物、信号、灯台、家、街灯など動かない物)は反応させない
+- どの場面でも必ず何かが反応するよう、木や草は全場面に置かれている `sway` にする
+- 反応は重ねがけしない。すでに反応中の物は、そのまま最後まで動かす
+- 飛び立った鳥は戻ってこない(その物が画面から消えるまで)
+- 連打しても音が重ならないよう、鳴き声は最後に鳴らしてから `REACT_CHIRP_GAP_SEC` 秒あけて鳴らす
+- 点滅・画面の揺れ・音量の急変はしない(DESIGN.md 18章)
+
+## 21. 踏切(crossing.js)
+
+- `CFG.CROSSING_INTERVAL` 秒ごとに、道の先に踏切を置く。カーブと丘のない区間を選ぶ
+- 見えてから通り過ぎるまでの流れ:
+  1. 警報機と遮断機を道の両側に立て、路面に踏切の板を描く
+  2. 近づくと「カンカン」の音が鳴りはじめる
+  3. 電車が奥を左右どちらかに横切る
+  4. 自車が着く前に電車は通り過ぎ、音も止む
+- **自車は止めないし、遅くもしない。遮断機は下ろさない**(DESIGN.md 18章)。踏切は「通り過ぎる景色」として作る
+- 電車は `road.sampleAt()` でその区間の投影に合わせて描き、道幅の外から外へ動かす

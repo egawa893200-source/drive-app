@@ -27,6 +27,10 @@ const CATALOG = {
   bush: { dir: 'roadside', shape: 'tree', color: '#5FAE52' },
   flowers: { dir: 'roadside', shape: 'tree', color: '#E8617D' },
 
+  // クラクションに反応する生き物(DESIGN.md 20章): 色つきの円
+  bird: { dir: 'roadside', shape: 'circle', color: '#5B6B8A' },
+  dog: { dir: 'roadside', shape: 'circle', color: '#C79A5B' },
+
   // 朝の草原: 色つきの角丸四角
   cow: { dir: 'meadow', shape: 'block', color: '#F2F2EC' },
   windmill: { dir: 'meadow', shape: 'block', color: '#EDEDE4' },

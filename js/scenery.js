@@ -6,21 +6,22 @@ const SCENES = [
   {
     id: 'meadow',
     skyTop: '#7EC8F0', skyBottom: '#CDEBFA', grass: '#7BC96F',
-    roadside: ['tree_round', 'tree_tall', 'bush', 'flowers', 'cow', 'windmill', 'barn'],
+    roadside: ['tree_round', 'tree_tall', 'bush', 'flowers', 'cow', 'windmill', 'barn',
+      'bird', 'dog'],
     sky: ['cloud', 'balloon'],
     far: ['mountain_a', 'mountain_b'],
   },
   {
     id: 'sea',
     skyTop: '#4FA8E8', skyBottom: '#BFE4FA', grass: '#8FD17F',
-    roadside: ['palm', 'lighthouse', 'tree_round', 'bush'],
+    roadside: ['palm', 'lighthouse', 'tree_round', 'bush', 'bird'],
     sky: ['cloud', 'seagull'],
     far: ['island', 'yacht'],
   },
   {
     id: 'town',
     skyTop: '#F29E6B', skyBottom: '#FAD7A0', grass: '#9CC27A',
-    roadside: ['building_a', 'building_b', 'signal', 'house', 'tree_round'],
+    roadside: ['building_a', 'building_b', 'signal', 'house', 'tree_round', 'dog', 'bird'],
     sky: ['cloud'],
     far: ['city_a', 'city_b'],
   },
@@ -52,6 +53,8 @@ const ITEM_SHAPE = {
   pine: { size: 0.45, aspect: 1.80 },
   streetlamp: { size: 0.18, aspect: 2.80 },
   owl: { size: 0.28, aspect: 1.10 },
+  bird: { size: 0.16, aspect: 0.75 },
+  dog: { size: 0.24, aspect: 0.85 },
 };
 
 // 空と遠景の帯の見た目。幅は画面幅に対する比

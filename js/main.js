@@ -11,6 +11,7 @@ import { createScenery } from './scenery.js';
 import { createObstacles } from './obstacles.js';
 import { createSettings } from './settings.js';
 import { createEnding } from './ending.js';
+import { createReactions } from './reactions.js';
 import { createDebug } from './debug.js';
 
 const START = 'start';
@@ -35,6 +36,7 @@ const player = createPlayer(assets);
 const audio = createAudio();
 const obstacles = createObstacles(assets, road, audio, () => player.bounce());
 const ending = createEnding(assets, road);
+const reactions = createReactions(road, audio);
 const debug = createDebug(new URLSearchParams(location.search).has('debug'));
 
 let state = START;
@@ -68,10 +70,17 @@ const settings = createSettings(settingsEl, {
 // 設定を開けるのは遊んでいる間だけ。起動画面では開かない
 const input = createInput(canvas, orientation, () => {
   // 眠っているときはタップしても何も起きない(DESIGN.md 11章)
-  if (state === PLAY || state === ENDING) audio.horn();
+  if (state !== PLAY && state !== ENDING) return;
+  // 鳴ったときだけ、道ばたの物を反応させる(DESIGN.md 20章)
+  if (audio.horn()) reactions.honk(position);
 }, () => {
   if (state !== START && state !== PAUSED) settings.open();
 });
+
+// 道ばたの物の描き方。反応の途中なら、その動きを足して描く(DESIGN.md 20章)
+function drawRoadItem(c, item, x, y, w, h) {
+  reactions.drawItem(c, item, x, y, w, h, assets.draw);
+}
 
 function resize() {
   orientation.resize(ctx);
@@ -166,6 +175,7 @@ function frame(now) {
     const lastPosition = position;
     position = (position + moved) % road.length;
     scenery.update(dt, position, lastPosition);
+    reactions.update(dt);
     // おわりの演出の間は新しい障害物を出さない。すでに出ている物は流れていく
     obstacles.update(dt, moved, player.x, obstaclesOn && state === PLAY);
     ending.update(dt, moved, speed);
@@ -186,7 +196,7 @@ function frame(now) {
     audio.updateMusic();
 
     scenery.drawBackground(ctx, W, H);
-    const carLine = road.render(ctx, W, H, position, assets.draw, scenery.grassColor());
+    const carLine = road.render(ctx, W, H, position, drawRoadItem, scenery.grassColor());
     obstacles.draw(ctx, W, H, position);
     ending.drawGarage(ctx, W, H, position);      // 車庫は自車より奥にある
     player.draw(ctx, W, H, carLine);
@@ -202,6 +212,7 @@ function frame(now) {
       scene: scenery.scene,
       assets: assets.stats(),
       obstacle: obstacles.info,
+      reacting: reactions.count,
       inset: orientation.inset,
       limit: xLimit,
       played: playedSec,

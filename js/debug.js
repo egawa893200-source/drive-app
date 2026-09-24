@@ -34,7 +34,8 @@ export function createDebug(initial) {
         : '-'}`,
       `assets ${info.assets ? `${info.assets.loaded}/${info.assets.requested}` : '-'}`,
       `obs ${info.obstacle ? `${info.obstacle.name} x${num(info.obstacle.x, 2)} ${info.obstacle.state}` : '-'}`,
-      `played ${num(info.played, 0)}s  end ${info.ending || '-'}`,
+      `played ${num(info.played, 0)}s  end ${info.ending || '-'}`
+        + `  react ${num(info.reacting, 0)}`,
       `safe L${num(info.inset && info.inset.left, 0)} R${num(info.inset && info.inset.right, 0)}`
         + ` T${num(info.inset && info.inset.top, 0)} B${num(info.inset && info.inset.bottom, 0)}`
         + `  limit ${num(info.limit, 2)}`,
