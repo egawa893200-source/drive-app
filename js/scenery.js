@@ -70,6 +70,9 @@ const BAND_SHAPE = {
   mountain_night_b: { width: 0.36, aspect: 0.38 },
 };
 
+// おわりの演出の夕焼け(DESIGN.md 12章)。どの場面からでもこの色へ寄せていく
+const SUNSET = { skyTop: '#E8603C', skyBottom: '#F8C070', grass: '#7A6A4E' };
+
 const SKY_TOP_RATIO = 0.35;      // 空の帯の下端(DESIGN.md 6章)
 const SKY_DRIFT = 0.006;         // 画面幅/秒。空の物がゆっくり漂う
 const FAR_DRIFT = 0.004;         // 画面幅/秒。遠景がごくゆっくり流れる
@@ -97,13 +100,13 @@ function hexToRgb(hex) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-// 2つの色を k(0〜1)で混ぜる。場面の切り替えに使う
-function mixColor(a, b, k) {
-  const x = hexToRgb(a);
-  const y = hexToRgb(b);
-  return `rgb(${Math.round(x[0] + (y[0] - x[0]) * k)},`
-    + `${Math.round(x[1] + (y[1] - x[1]) * k)},`
-    + `${Math.round(x[2] + (y[2] - x[2]) * k)})`;
+// 2つの色を k(0〜1)で混ぜる。場面の切り替えと夕焼けに使う
+function mixRgb(a, b, k) {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * k),
+    Math.round(a[1] + (b[1] - a[1]) * k),
+    Math.round(a[2] + (b[2] - a[2]) * k),
+  ];
 }
 
 function buildBand(names, count, rand, yFrom, yTo) {
@@ -136,6 +139,7 @@ export function createScenery(assets, road) {
   }
 
   let elapsed = 0;
+  let sunset = 0;        // おわりの演出の進み具合(0〜1)。ending.js が入れる
   let skyX = 0;
   let farX = 0;
   let gradient = null;
@@ -149,6 +153,18 @@ export function createScenery(assets, road) {
   // 走った距離の累計。position は一周で0に戻ってしまうので、置く位置の基準には
   // 使えない(使うと一周したところで物を置くのが止まってしまう)
   let travelled = 0;
+
+  // 場面の色に、夕焼けを重ねたもの
+  function toneOf(key) {
+    const { from, to, k } = sceneState();
+    let c = mixRgb(hexToRgb(from[key]), hexToRgb(to[key]), k);
+    if (sunset > 0) c = mixRgb(c, hexToRgb(SUNSET[key]), sunset);
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+
+  function setSunset(k) {
+    sunset = Math.max(0, Math.min(1, k));
+  }
 
   function sceneState() {
     const period = CFG.SCENE_DURATION * SCENES.length;
@@ -245,8 +261,8 @@ export function createScenery(assets, road) {
   function drawBackground(ctx, W, H) {
     const { from, to, k } = sceneState();
     const horizon = H * CFG.HORIZON_RATIO;
-    const top = mixColor(from.skyTop, to.skyTop, k);
-    const bottom = mixColor(from.skyBottom, to.skyBottom, k);
+    const top = toneOf('skyTop');
+    const bottom = toneOf('skyBottom');
 
     const key = `${top}|${bottom}|${H}`;
     if (gradientKey !== key) {
@@ -262,19 +278,19 @@ export function createScenery(assets, road) {
     drawSceneLayers(ctx, W, H, from, horizon, 1 - k);
     if (k > 0) drawSceneLayers(ctx, W, H, to, horizon, k);
 
-    ctx.fillStyle = mixColor(from.grass, to.grass, k);
+    ctx.fillStyle = toneOf('grass');
     ctx.fillRect(0, Math.ceil(horizon), W, H);
   }
 
   function grassColor() {
-    const { from, to, k } = sceneState();
-    return mixColor(from.grass, to.grass, k);
+    return toneOf('grass');
   }
 
   return {
     drawBackground,
     update,
     grassColor,
+    setSunset,
     get scene() {
       const { from, to, k } = sceneState();
       return { from: from.id, to: to.id, k };

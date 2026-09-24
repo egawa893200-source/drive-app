@@ -194,6 +194,15 @@ body {
   cursor: pointer;
 }
 
+#settingsPanel .actions button[hidden] {
+  display: none;
+}
+
+#settingsPanel .actions #restartButton {
+  background: #A7D9A0;
+  font-weight: 700;
+}
+
 #settingsPanel .actions #closeSettings {
   background: #7EC8F0;
   font-weight: 700;

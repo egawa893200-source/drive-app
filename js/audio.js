@@ -181,7 +181,7 @@ export function createAudio() {
     if (!AC) return;
     ctx = new AC();
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : 1;
+    master.gain.value = muted ? 0 : volume;
     master.connect(ctx.destination);
     buildEngine();
     buildWind();
@@ -353,9 +353,21 @@ export function createAudio() {
 
   // 設定の「音」。iOSは消音スイッチが効かない場合があるので必須(DESIGN.md 10章)
   let muted = false;
+  let volume = 1;      // おわりの演出で下げる(DESIGN.md 12章)
+
+  function applyGain(tau) {
+    if (master) master.gain.setTargetAtTime(muted ? 0 : volume, ctx.currentTime, tau);
+  }
+
   function setMuted(v) {
     muted = v;
-    if (master) master.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.05);
+    applyGain(0.05);
+  }
+
+  // sec かけて音量を変える。setTargetAtTime は時定数なので sec/3 でほぼ届く
+  function setVolume(v, sec = 0.5) {
+    volume = Math.max(0, Math.min(1, v));
+    applyGain(Math.max(0.01, sec / 3));
   }
 
   // アプリが隠れている間は音を止める(DESIGN.md 11章)
@@ -372,6 +384,7 @@ export function createAudio() {
   return {
     start,
     setMuted,
+    setVolume,
     suspend,
     resume,
     setWind,

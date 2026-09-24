@@ -56,6 +56,10 @@ export const CFG = {
   // おわり
   END_MINUTES_OPTIONS: [5, 10, 0],  // 0 = なし
   END_SUNSET_SEC: 30,
+  // 段階8: 車庫が見えてから入るまでの秒数。描画距離(DRAW_DISTANCE区間 = 40000)の
+  // 内側に収まる値にすること。速いほうの速度でも 3600*8 = 28800 で収まる
+  END_GARAGE_LEAD_SEC: 8,
+  END_FADE_SEC: 3,                  // 車庫に入ってから暗くなりきるまでの秒数
 
   // 路面の描画(段階1で追加)
   CENTER_LINE_RATIO: 0.035,    // センターラインの太さ(道幅の半分に対する比)
