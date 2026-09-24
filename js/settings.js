@@ -44,8 +44,10 @@ function save(v) {
 }
 
 // onChange(key, value) は値が変わるたびに呼ばれる。
-// onCalibrate は「傾きをリセット」。設定以外のデータは保存しない(DESIGN.md 18章)
-export function createSettings(root, { onChange, onCalibrate }) {
+// onCalibrate は「傾きをリセット」、onRestart は「もう一度あそぶ」。
+// 眠ったあとは設定からしか再開できないので、その入口になる(DESIGN.md 11章)。
+// 設定以外のデータは保存しない(DESIGN.md 18章)
+export function createSettings(root, { onChange, onCalibrate, onRestart }) {
   const values = load();
   const rows = root.querySelectorAll('.row[data-key]');
 
@@ -77,6 +79,14 @@ export function createSettings(root, { onChange, onCalibrate }) {
   root.querySelector('#calibrateButton').addEventListener('click', () => onCalibrate());
   root.querySelector('#closeSettings').addEventListener('click', () => close());
 
+  // 「もう一度あそぶ」は、眠っているときだけ出す
+  const restartButton = root.querySelector('#restartButton');
+  restartButton.addEventListener('click', () => onRestart());
+
+  function showRestart(v) {
+    restartButton.hidden = !v;
+  }
+
   function open() {
     paint();
     root.hidden = false;
@@ -97,6 +107,7 @@ export function createSettings(root, { onChange, onCalibrate }) {
     open,
     close,
     applyAll,
+    showRestart,
     get isOpen() { return !root.hidden; },
     get values() { return values; },
   };

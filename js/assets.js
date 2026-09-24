@@ -51,6 +51,10 @@ const CATALOG = {
   streetlamp: { dir: 'night', shape: 'block', color: '#F0D68A' },
   moon: { dir: 'night', shape: 'block', color: '#F5E9A8' },
 
+  // おわりの演出(DESIGN.md 12章、13.2): 四角 / 三日月
+  garage: { dir: 'ending', shape: 'block', color: '#C99A6A' },
+  goodnight: { dir: 'ending', shape: 'crescent', color: '#F5E9A8' },
+
   // 遠景: 半円
   mountain_a: { dir: 'far', shape: 'dome', color: '#6FA86A' },
   mountain_b: { dir: 'far', shape: 'dome', color: '#5E9A5E' },
@@ -91,6 +95,19 @@ const SHAPES = {
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  },
+  // 三日月。大きい丸から、右に0.45ずらした半径0.9の丸をえぐる。
+  // 2つの丸は ±64.1度(1.119ラジアン)で交わるので、そこを継ぎ目にする
+  crescent(ctx, x, y, w, h, color) {
+    const r = Math.min(w, h) / 2;
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 1.119, 2 * Math.PI - 1.119, false);
+    ctx.arc(cx + r * 0.45, cy, r * 0.9, -1.586, 1.586, true);
+    ctx.closePath();
     ctx.fill();
   },
   dome(ctx, x, y, w, h, color) {
