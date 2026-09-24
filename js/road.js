@@ -74,6 +74,7 @@ function buildSegments() {
       segments.push({
         index,
         items: [],          // 道ばたの物(scenery.js が入れる)
+        mark: null,         // 路面を塗り替える色(踏切。crossing.js が入れる)
         clip: 0,            // 手前の丘で隠れる高さ
         curve: sec.curve * curveEnvelope(t1),
         p1: { world: { y: hillAt(sec.hill, t1), z: index * SEG }, camera: {}, screen: {} },
@@ -123,6 +124,14 @@ export function createRoad() {
   function drawSegment(ctx, W, seg, dark, grass) {
     const p1 = seg.p1.screen;
     const p2 = seg.p2.screen;
+
+    // 踏切の線路と枕木(DESIGN.md 21章)。画面の端から端まで塗り、
+    // 線路が景色の向こうまで続いて見えるようにする
+    if (seg.mark) {
+      ctx.fillStyle = seg.mark;
+      ctx.fillRect(0, p2.y, W, p1.y - p2.y);
+      return;
+    }
 
     // 草地。手前から奥へ描くので、区間ごとに帯で塗りつぶしてよい
     ctx.fillStyle = grass;
@@ -272,6 +281,26 @@ export function createRoad() {
 
   // 道ばたの物を1区間ぶん置き換える。場面が変わっても、すでに出ている物は
   // そのまま流れていくように、手前から順に入れ替えていく(DESIGN.md 8.1)
+  function wrapIndex(index) {
+    return ((index % segments.length) + segments.length) % segments.length;
+  }
+
+  // 路面を別の色で塗る。null で元に戻す(DESIGN.md 21章)
+  function setMark(index, color) {
+    segments[wrapIndex(index)].mark = color || null;
+  }
+
+  // カーブも坂もない区間か。踏切を置ける場所を探すのに使う
+  function isStraightFlat(index) {
+    const seg = segments[wrapIndex(index)];
+    return seg.curve === 0 && seg.p1.world.y === 0 && seg.p2.world.y === 0;
+  }
+
+  // 自車の見かけの位置がある区間の番号
+  function carSegmentIndex(position) {
+    return segmentAt(position + carLineDistance()).index;
+  }
+
   // 自車の前方 count 区間ぶんの物を順に渡す(DESIGN.md 20章)
   function forEachItemAhead(position, count, fn) {
     const base = segmentAt(position);
@@ -282,7 +311,7 @@ export function createRoad() {
   }
 
   function setItems(index, items) {
-    segments[((index % segments.length) + segments.length) % segments.length].items = items || [];
+    segments[wrapIndex(index)].items = items || [];
   }
 
   // その地点のカーブ量。遠景の横ずれに使う(DESIGN.md 8.2)
@@ -298,6 +327,9 @@ export function createRoad() {
     sampleAt,
     setItems,
     forEachItemAhead,
+    setMark,
+    isStraightFlat,
+    carSegmentIndex,
     curveAt,
     segmentCount: segments.length,
     segmentLength: SEG,

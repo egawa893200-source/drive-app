@@ -1,7 +1,7 @@
 // Service Worker(DESIGN.md 15章)。キャッシュ優先。
 // 機内モードでも、一度開いたことがあれば遊べるようにする。
 // CACHE_VERSION を上げると、古いキャッシュを消して入れ直す。
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';   // v2: 段階9・10のファイルを足した
 const CACHE = `drive-${CACHE_VERSION}`;
 
 // アプリのファイル。assets/ はここに書かない。
@@ -24,6 +24,8 @@ const SHELL = [
   'js/obstacles.js',
   'js/settings.js',
   'js/ending.js',
+  'js/reactions.js',
+  'js/crossing.js',
   'js/debug.js',
 ];
 

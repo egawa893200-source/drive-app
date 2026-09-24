@@ -55,6 +55,11 @@ const CATALOG = {
   streetlamp: { dir: 'night', shape: 'block', color: '#F0D68A' },
   moon: { dir: 'night', shape: 'block', color: '#F5E9A8' },
 
+  // 踏切(DESIGN.md 21章): 色つきの角丸四角
+  train: { dir: 'crossing', shape: 'block', color: '#5FA8D8' },
+  gate: { dir: 'crossing', shape: 'block', color: '#F2C94C' },
+  bell: { dir: 'crossing', shape: 'block', color: '#45454D' },
+
   // おわりの演出(DESIGN.md 12章、13.2): 四角 / 三日月
   garage: { dir: 'ending', shape: 'block', color: '#C99A6A' },
   goodnight: { dir: 'ending', shape: 'crescent', color: '#F5E9A8' },

@@ -57,6 +57,14 @@ export const CFG = {
   REACT_SWAY_DEG: 10,          // ゆれの大きさ(度)。7度だと遠くの木で数pxしか動かず気づけない
   REACT_CHIRP_GAP_SEC: 1.2,    // 鳴き声を続けて鳴らさない間隔
 
+  // 踏切(段階10、DESIGN.md 21章)。時間はどれも「踏切に着く何秒前か」
+  CROSSING_FIRST_SEC: 20,      // 走りはじめてから最初の踏切を探しはじめるまで
+  CROSSING_INTERVAL: 45,       // 踏切を通り過ぎてから、次を探しはじめるまで
+  CROSSING_BELL_AT: 8.5,       // カンカンが鳴りはじめる
+  CROSSING_TRAIN_AT: 6.5,      // 電車が動きだす
+  CROSSING_TRAIN_SEC: 4.5,     // 電車が横切るのにかける秒数。着く2秒前には通り過ぎる
+  CROSSING_BELL_INTERVAL: 0.45, // カンカンの間隔
+
   // 時間処理
   MAX_DT: 0.05,
   MAX_DPR: 2,
