@@ -179,7 +179,7 @@ function frame(now) {
     scenery.update(dt, position, lastPosition);
     reactions.update(dt);
     // 踏切。おわりの演出の間は新しく置かない(DESIGN.md 21章)
-    crossing.update(dt, position, speed, state === PLAY);
+    crossing.update(dt, position, speed, state === PLAY, W);
     // おわりの演出の間と、踏切を通るあいだは新しい障害物を出さない。
     // すでに出ている物は流れていく
     obstacles.update(dt, moved, player.x, obstaclesOn && state === PLAY && !crossing.active);

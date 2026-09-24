@@ -60,9 +60,12 @@ export const CFG = {
   // 踏切(段階10、DESIGN.md 21章)。時間はどれも「踏切に着く何秒前か」
   CROSSING_FIRST_SEC: 20,      // 走りはじめてから最初の踏切を探しはじめるまで
   CROSSING_INTERVAL: 45,       // 踏切を通り過ぎてから、次を探しはじめるまで
-  CROSSING_BELL_AT: 8.5,       // カンカンが鳴りはじめる
-  CROSSING_TRAIN_AT: 6.5,      // 電車が動きだす
-  CROSSING_TRAIN_SEC: 4.5,     // 電車が横切るのにかける秒数。着く2秒前には通り過ぎる
+  // 電車は目の前を通す。遠くから走ってきて、着く直前に道を横切る。
+  // 動いている時間を長くとるほど、横切る速さがゆっくりになる。
+  // TRAIN_AT は描画距離(200区間)の内側に収まる値にすること(ふつうの速さで 10.8秒まで)
+  CROSSING_BELL_AT: 9.0,       // カンカンが鳴りはじめる
+  CROSSING_TRAIN_AT: 8.5,      // 電車が画面の外で動きだす
+  CROSSING_CLEAR_AT: 0.7,      // 電車の最後尾が道から出る。カンカンもここで止む
   CROSSING_BELL_INTERVAL: 0.45, // カンカンの間隔
 
   // 時間処理

@@ -266,13 +266,18 @@ export function createRoad() {
       maxY = seg.p2.screen.y;
     }
 
-    // 道ばたの物は奥から手前の順に描く(画家のアルゴリズム、DESIGN.md 7.2)
+    // 道ばたの物は奥から手前の順に描く(画家のアルゴリズム、DESIGN.md 7.2)。
+    // ITEM_DRAW_DISTANCE より先は、遠くから見えている必要がある物(far)だけ描く。
+    // 踏切の電車がそれにあたる(DESIGN.md 21章)
     if (drawItem) {
-      for (let n = Math.min(ITEM_DRAW_DISTANCE, CFG.DRAW_DISTANCE) - 1; n >= 0; n--) {
+      for (let n = CFG.DRAW_DISTANCE - 1; n >= 0; n--) {
         const seg = segments[(base.index + n) % segments.length];
         if (!seg.items.length) continue;
         if (seg.p1.camera.z <= CAMERA_DEPTH) continue;
-        for (const item of seg.items) drawSprite(ctx, W, H, seg, item, drawItem);
+        const near = n < ITEM_DRAW_DISTANCE;
+        for (const item of seg.items) {
+          if (near || item.far) drawSprite(ctx, W, H, seg, item, drawItem);
+        }
       }
     }
 
