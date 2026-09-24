@@ -351,8 +351,21 @@ export function createAudio() {
     });
   }
 
+  // アプリが隠れている間は音を止める(DESIGN.md 11章)
+  function suspend() {
+    if (ctx) ctx.suspend();
+  }
+
+  function resume() {
+    if (!ctx) return;
+    ctx.resume();
+    bgmNextTime = 0;   // 止まっていた間のぶんをまとめて鳴らさない
+  }
+
   return {
     start,
+    suspend,
+    resume,
     setWind,
     horn,
     crash,

@@ -44,6 +44,11 @@ export const CFG = {
   SCENE_DURATION: 60,
   SCENE_BLEND: 30,
 
+  // 画面の向き(段階8)。iOS Safari は向きを固定できないので、縦持ちのときは
+  // 描画そのものを回して横画面にする(DESIGN.md 6章)。
+  // 実機で上下が逆に見えたら -90 にする
+  CANVAS_ROTATION: 90,
+
   // 時間処理
   MAX_DT: 0.05,
   MAX_DPR: 2,

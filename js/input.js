@@ -22,7 +22,7 @@ function steerAngleDeg(g, rotationDeg) {
   return CFG.STEER_SIGN * Math.asin(s) * 180 / Math.PI;
 }
 
-export function createInput(target, onTap) {
+export function createInput(target, orientation, onTap) {
   const pointers = new Map();        // pointerId -> -1(左) / +1(右)
   const pressedAt = new Map();       // pointerId -> 押した時刻
   const keys = { left: false, right: false };
@@ -38,15 +38,12 @@ export function createInput(target, onTap) {
   let needCalibration = false;
   let sensitivity = CFG.STEER_SENSITIVITY.mid;   // 設定で変えられるのは段階8
 
-  // 端末の向き + canvas の回転角。canvas の回転は段階8(orientation.js)で入る
-  let canvasRot = 0;
-
   function rotationDeg() {
     const screenAngle = (window.screen && window.screen.orientation
       && typeof window.screen.orientation.angle === 'number')
       ? window.screen.orientation.angle
       : (typeof window.orientation === 'number' ? window.orientation : 0);
-    return screenAngle + canvasRot;
+    return screenAngle + orientation.rotation;
   }
 
   function onMotion(e) {
@@ -106,9 +103,9 @@ export function createInput(target, onTap) {
   }
 
   // 押された場所が画面の左半分か右半分か。
-  // 段階8で canvas を回転させたら、orientation.js の変換を通してから判定する
-  function sideOf(clientX) {
-    return clientX < window.innerWidth / 2 ? -1 : 1;
+  // 箱を回しているので、論理座標に直してから判定する(DESIGN.md 5.4)
+  function sideOf(clientX, clientY) {
+    return orientation.toLogical(clientX, clientY).x < orientation.width / 2 ? -1 : 1;
   }
 
   // 左右を同時に押したら打ち消し合う
@@ -121,7 +118,7 @@ export function createInput(target, onTap) {
   }
 
   target.addEventListener('pointerdown', (e) => {
-    pointers.set(e.pointerId, sideOf(e.clientX));
+    pointers.set(e.pointerId, sideOf(e.clientX, e.clientY));
     pressedAt.set(e.pointerId, performance.now());
     if (target.setPointerCapture) target.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -129,7 +126,7 @@ export function createInput(target, onTap) {
 
   // 押したまま左右をまたいだら向きを切り替える
   target.addEventListener('pointermove', (e) => {
-    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, sideOf(e.clientX));
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, sideOf(e.clientX, e.clientY));
   });
 
   target.addEventListener('pointerup', (e) => {
@@ -195,6 +192,5 @@ export function createInput(target, onTap) {
     enableGyro,
     calibrate,
     info,
-    setCanvasRotation(deg) { canvasRot = deg; },
   };
 }
