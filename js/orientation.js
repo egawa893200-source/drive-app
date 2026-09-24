@@ -62,6 +62,13 @@ export function createOrientation(stage, canvas, probe) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     mapInsets(viewportInsets());
+
+    // 論理座標での余白をCSSからも使えるようにする。
+    // 箱を回すと env() の向きと合わなくなるため(DESIGN.md 6章)
+    stage.style.setProperty('--inset-left', `${inset.left}px`);
+    stage.style.setProperty('--inset-right', `${inset.right}px`);
+    stage.style.setProperty('--inset-top', `${inset.top}px`);
+    stage.style.setProperty('--inset-bottom', `${inset.bottom}px`);
   }
 
   // 画面上の点を、回転を戻して論理座標にする(DESIGN.md 5.4、6章)

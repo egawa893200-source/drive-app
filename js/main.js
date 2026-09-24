@@ -1,6 +1,5 @@
 // 起動とメインループ(DESIGN.md 11章)。
-// 段階8の1: 画面の回転、safe area、一時停止と復帰、wake lock。
-// 設定画面とおわりの演出は段階8の続きで入れる。
+// 段階8の2: 大人向け設定。おわりの演出とPWAは段階8の3で入れる。
 import { CFG } from './config.js';
 import { createOrientation } from './orientation.js';
 import { createRoad } from './road.js';
@@ -10,6 +9,7 @@ import { createAudio } from './audio.js';
 import { createAssets } from './assets.js';
 import { createScenery } from './scenery.js';
 import { createObstacles } from './obstacles.js';
+import { createSettings } from './settings.js';
 import { createDebug } from './debug.js';
 
 const START = 'start';
@@ -22,24 +22,46 @@ const stageEl = document.getElementById('stage');
 const safeEl = document.getElementById('safearea');
 const startEl = document.getElementById('start');
 const startButton = document.getElementById('startButton');
+const settingsEl = document.getElementById('settings');
 
 const orientation = createOrientation(stageEl, canvas, safeEl);
 const road = createRoad();
 const assets = createAssets();
 const scenery = createScenery(assets, road);
-const player = createPlayer();
+const player = createPlayer(assets);
 const audio = createAudio();
-// 「障害物なし」の設定は段階8の続き。それまでは常にあり(DESIGN.md 9章の初期値)
 const obstacles = createObstacles(assets, road, audio, () => player.bounce());
-const input = createInput(canvas, orientation, () => {
-  if (state === PLAY) audio.horn();
-});
 const debug = createDebug(new URLSearchParams(location.search).has('debug'));
 
 let state = START;
 let W = 0;
 let H = 0;
 let xLimit = CFG.CAR_X_LIMIT;
+let speed = CFG.SPEED.normal;
+let obstaclesOn = true;
+
+// 設定の反映先(DESIGN.md 14章)
+const APPLY = {
+  sound: (v) => audio.setMuted(v === 'off'),
+  speed: (v) => { speed = CFG.SPEED[v]; },
+  obstacles: (v) => { obstaclesOn = v === 'on'; },
+  sensitivity: (v) => input.setSensitivity(CFG.STEER_SENSITIVITY[v]),
+  carColor: (v) => player.setColor(v),
+  endMinutes: () => {},          // おわりの演出は段階8の3で入れる
+  debug: (v) => debug.setEnabled(v === 'on'),
+};
+
+const settings = createSettings(settingsEl, {
+  onChange: (key, value) => APPLY[key](value),
+  onCalibrate: () => input.calibrate(),
+});
+
+// 設定を開けるのは PLAY のときだけ。起動画面では開かない
+const input = createInput(canvas, orientation, () => {
+  if (state === PLAY) audio.horn();
+}, () => {
+  if (state === PLAY) settings.open();
+});
 
 function resize() {
   orientation.resize(ctx);
@@ -74,6 +96,7 @@ function begin() {
   input.enableGyro();   // 許可ダイアログもユーザー操作の中で出す
   input.calibrate();
   keepScreenOn();
+  settings.applyAll();   // 保存されている設定をここで効かせる
   startEl.hidden = true;
   state = PLAY;
 }
@@ -98,11 +121,11 @@ function frame(now) {
     player.update(dt, steer, xLimit);
     audio.setWind(Math.abs(steer));
 
-    const moved = CFG.SPEED.normal * dt;
+    const moved = speed * dt;
     const lastPosition = position;
     position = (position + moved) % road.length;
     scenery.update(dt, position, lastPosition);
-    obstacles.update(dt, moved, player.x, true);
+    obstacles.update(dt, moved, player.x, obstaclesOn);
 
     const scene = scenery.scene;
     audio.setScene(scene.from, scene.to, scene.k);

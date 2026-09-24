@@ -3,6 +3,10 @@ import { CFG } from './config.js';
 
 const DEG = Math.PI / 180;
 const TAP_MS = 200;
+// 設定を開くジェスチャー(DESIGN.md 14章)。
+// 画面の左上と右下の角(それぞれ短辺の15%四方)を同時に2秒
+const CORNER_RATIO = 0.15;
+const CORNER_HOLD_SEC = 2;
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -22,9 +26,12 @@ function steerAngleDeg(g, rotationDeg) {
   return CFG.STEER_SIGN * Math.asin(s) * 180 / Math.PI;
 }
 
-export function createInput(target, orientation, onTap) {
+export function createInput(target, orientation, onTap, onCorners) {
   const pointers = new Map();        // pointerId -> -1(左) / +1(右)
   const pressedAt = new Map();       // pointerId -> 押した時刻
+  const spots = new Map();           // pointerId -> 論理座標
+  let cornerHeld = 0;                // 角を押し続けている秒数
+  let cornerFired = false;
   const keys = { left: false, right: false };
   let touchSteer = 0;                // なめらかにしたあとのタッチ操作量
 
@@ -36,7 +43,7 @@ export function createInput(target, orientation, onTap) {
   let gyroOn = false;
   let baseline = 0;
   let needCalibration = false;
-  let sensitivity = CFG.STEER_SENSITIVITY.mid;   // 設定で変えられるのは段階8
+  let sensitivity = CFG.STEER_SENSITIVITY.mid;
 
   function rotationDeg() {
     const screenAngle = (window.screen && window.screen.orientation
@@ -108,6 +115,19 @@ export function createInput(target, orientation, onTap) {
     return orientation.toLogical(clientX, clientY).x < orientation.width / 2 ? -1 : 1;
   }
 
+  // 左上と右下の角を同時に押し続けているか(DESIGN.md 14章)。
+  // 手のひらを置いただけでは両方に届かない
+  function cornersHeld() {
+    const size = orientation.height * CORNER_RATIO;
+    let topLeft = false;
+    let bottomRight = false;
+    for (const p of spots.values()) {
+      if (p.x < size && p.y < size) topLeft = true;
+      if (p.x > orientation.width - size && p.y > orientation.height - size) bottomRight = true;
+    }
+    return topLeft && bottomRight;
+  }
+
   // 左右を同時に押したら打ち消し合う
   function touchTarget() {
     let t = 0;
@@ -120,26 +140,38 @@ export function createInput(target, orientation, onTap) {
   target.addEventListener('pointerdown', (e) => {
     pointers.set(e.pointerId, sideOf(e.clientX, e.clientY));
     pressedAt.set(e.pointerId, performance.now());
-    if (target.setPointerCapture) target.setPointerCapture(e.pointerId);
+    spots.set(e.pointerId, orientation.toLogical(e.clientX, e.clientY));
+    // 取れないことがあるので、失敗しても操作は続けられるようにする
+    try {
+      if (target.setPointerCapture) target.setPointerCapture(e.pointerId);
+    } catch (err) {
+      // 無視してよい
+    }
     e.preventDefault();
   });
 
   // 押したまま左右をまたいだら向きを切り替える
   target.addEventListener('pointermove', (e) => {
-    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, sideOf(e.clientX, e.clientY));
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, sideOf(e.clientX, e.clientY));
+    spots.set(e.pointerId, orientation.toLogical(e.clientX, e.clientY));
   });
 
   target.addEventListener('pointerup', (e) => {
     const at = pressedAt.get(e.pointerId);
+    const wasCorner = cornerHeld > 0;
     pointers.delete(e.pointerId);
     pressedAt.delete(e.pointerId);
-    // 押してすぐ離したらクラクション(DESIGN.md 5.4)
-    if (at !== undefined && performance.now() - at < TAP_MS && onTap) onTap();
+    spots.delete(e.pointerId);
+    // 押してすぐ離したらクラクション(DESIGN.md 5.4)。
+    // ただし設定を開くジェスチャーの途中なら鳴らさない
+    if (!wasCorner && at !== undefined && performance.now() - at < TAP_MS && onTap) onTap();
   });
 
   target.addEventListener('pointercancel', (e) => {
     pointers.delete(e.pointerId);
     pressedAt.delete(e.pointerId);
+    spots.delete(e.pointerId);
   });
 
   // PCでの開発用
@@ -156,11 +188,24 @@ export function createInput(target, orientation, onTap) {
   window.addEventListener('blur', () => {
     pointers.clear();
     pressedAt.clear();
+    spots.clear();
     keys.left = false;
     keys.right = false;
   });
 
   function update(dt) {
+    // 角の長押しで設定を開く
+    if (cornersHeld()) {
+      cornerHeld += dt;
+      if (!cornerFired && cornerHeld >= CORNER_HOLD_SEC) {
+        cornerFired = true;
+        if (onCorners) onCorners();
+      }
+    } else {
+      cornerHeld = 0;
+      cornerFired = false;
+    }
+
     if (hasMotion) {
       const k = 1 - Math.exp(-dt / CFG.GRAVITY_LPF_TAU);
       gravity.x += (raw.x - gravity.x) * k;
@@ -169,7 +214,10 @@ export function createInput(target, orientation, onTap) {
       if (needCalibration) calibrate();
     }
 
-    touchSteer += (touchTarget() - touchSteer) * (1 - Math.exp(-dt / CFG.TOUCH_RAMP_TAU));
+    // 角を押しているあいだは操縦しない。離したときに跳ねないよう 0 に戻していく
+    const target = cornerHeld > 0 ? 0 : touchTarget();
+    touchSteer += (target - touchSteer) * (1 - Math.exp(-dt / CFG.TOUCH_RAMP_TAU));
+    if (cornerHeld > 0) return 0;
 
     // タッチとジャイロは併用できる。両方あれば足してクランプ(DESIGN.md 5.4)
     return clamp(touchSteer + gyroSteer(), -1, 1);
@@ -192,5 +240,6 @@ export function createInput(target, orientation, onTap) {
     enableGyro,
     calibrate,
     info,
+    setSensitivity(v) { sensitivity = v; },
   };
 }

@@ -22,6 +22,71 @@
   <div id="start">
     <button id="startButton" type="button">はじめる</button>
   </div>
+
+  <!-- 大人向け設定(DESIGN.md 14章)。画面の左上と右下の角を同時に2秒押すと開く -->
+  <div id="settings" hidden>
+    <div id="settingsPanel">
+      <div class="rows">
+      <div class="row" data-key="sound">
+        <span class="label">音</span>
+        <span class="opts">
+          <button type="button" data-value="on">オン</button>
+          <button type="button" data-value="off">オフ</button>
+        </span>
+      </div>
+      <div class="row" data-key="speed">
+        <span class="label">速度</span>
+        <span class="opts">
+          <button type="button" data-value="slow">ゆっくり</button>
+          <button type="button" data-value="normal">ふつう</button>
+        </span>
+      </div>
+      <div class="row" data-key="obstacles">
+        <span class="label">障害物</span>
+        <span class="opts">
+          <button type="button" data-value="on">あり</button>
+          <button type="button" data-value="off">なし</button>
+        </span>
+      </div>
+      <div class="row" data-key="sensitivity">
+        <span class="label">ジャイロ感度</span>
+        <span class="opts">
+          <button type="button" data-value="low">弱</button>
+          <button type="button" data-value="mid">中</button>
+          <button type="button" data-value="high">強</button>
+        </span>
+      </div>
+      <div class="row" data-key="carColor">
+        <span class="label">車の色</span>
+        <span class="opts">
+          <button type="button" data-value="red">赤</button>
+          <button type="button" data-value="blue">青</button>
+          <button type="button" data-value="yellow">黄</button>
+          <button type="button" data-value="white">白</button>
+        </span>
+      </div>
+      <div class="row" data-key="endMinutes">
+        <span class="label">おわりの時間</span>
+        <span class="opts">
+          <button type="button" data-value="5">5分</button>
+          <button type="button" data-value="10">10分</button>
+          <button type="button" data-value="0">なし</button>
+        </span>
+      </div>
+      <div class="row" data-key="debug">
+        <span class="label">デバッグ表示</span>
+        <span class="opts">
+          <button type="button" data-value="off">オフ</button>
+          <button type="button" data-value="on">オン</button>
+        </span>
+      </div>
+      </div>
+      <div class="actions">
+        <button type="button" id="calibrateButton">傾きをリセット</button>
+        <button type="button" id="closeSettings">閉じる</button>
+      </div>
+    </div>
+  </div>
 </div>
 <script type="module" src="js/main.js"></script>
 </body>

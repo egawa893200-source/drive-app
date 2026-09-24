@@ -10,7 +10,8 @@ function num(v, digits = 1) {
   return v === null || v === undefined ? '-' : v.toFixed(digits);
 }
 
-export function createDebug(enabled) {
+export function createDebug(initial) {
+  let enabled = initial;
   let fps = 0;
   let since = 0;
   let lines = [];
@@ -54,5 +55,10 @@ export function createDebug(enabled) {
     ctx.restore();
   }
 
-  return { update, draw, enabled };
+  return {
+    update,
+    draw,
+    setEnabled(v) { enabled = v; if (!v) lines = []; },
+    get enabled() { return enabled; },
+  };
 }
