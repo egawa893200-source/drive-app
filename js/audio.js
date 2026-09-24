@@ -65,6 +65,21 @@ const BGM_SCENES = {
 // 驚いた鳥があとから鳴く感じになり、音も聞き分けやすい
 const CHIRP = { gain: 0.045, from: [2100, 2500], rise: 1.35, dur: 0.09, gap: 0.13, delay: 0.25 };
 
+// 踏切のカンカン(DESIGN.md 21章)。鐘らしく、倍音を整数倍からずらして重ねる。
+// 2つの高さを交互に鳴らす
+const BELL = {
+  gain: 0.05,
+  freqs: [760, 700],
+  partials: [[1, 1], [2.76, 0.35], [5.4, 0.12]],   // [倍率, 大きさ]
+  decay: 0.32,
+};
+
+// ガタンゴトン(DESIGN.md 21章)。レールの継ぎ目の「タン」を雑音で作り、
+// 下に小さく「ドン」を足す。200Hz前後はエンジンの音と重なって聞こえなくなるので、
+// 「タン」はそれより上(900Hz / 620Hz)に置く
+// 低いほうはBGMと音域が近く埋もれやすいので、少し大きくする(lowBoost)
+const CLACK = { gain: 0.10, freqs: [900, 620], q: 2.5, decay: 0.08, thump: 0.35, thumpRatio: 0.18, lowBoost: 1.8 };
+
 // 衝突と回避(DESIGN.md 10章)。どちらもやわらかい音にする
 const CRASH = { gain: 0.10, from: 600, to: 300, fall: 0.2, tail: 0.3 };
 const DODGE = { gain: 0.055, notes: [523, 659, 784], step: 0.07, dur: 0.16 };
@@ -281,6 +296,77 @@ export function createAudio() {
     return true;
   }
 
+  // 踏切のカンカンを1回。level は 0〜1(遠いと小さい)、alt で高さを替える
+  function bell(level, alt) {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const f = BELL.freqs[alt ? 1 : 0];
+    const out = ctx.createGain();
+    out.gain.value = BELL.gain * level;
+    out.connect(master);
+    BELL.partials.forEach(([ratio, amp], i) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = f * ratio;
+      const g = ctx.createGain();
+      // 高い倍音ほど早く消える
+      const end = t + BELL.decay / Math.sqrt(ratio);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(amp, t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, end);
+      osc.connect(g).connect(out);
+      osc.start(t);
+      osc.stop(end + 0.02);
+      // 基音がいちばん長く鳴るので、それが止まったらまとめ役も外す
+      osc.onended = () => {
+        osc.disconnect();
+        g.disconnect();
+        if (i === 0) out.disconnect();
+      };
+    });
+  }
+
+  // ガタンゴトンの1打。low で低いほう(ゴトン)
+  let noise = null;
+  function clack(level, low) {
+    if (!ctx || level <= 0.01) return;
+    if (!noise) {
+      const len = Math.floor(ctx.sampleRate * 0.3);
+      noise = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const t = ctx.currentTime;
+    const f = CLACK.freqs[low ? 1 : 0];
+    const peak = CLACK.gain * level * (low ? CLACK.lowBoost : 1);
+
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = f;
+    bp.Q.value = CLACK.q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(peak, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + CLACK.decay);
+    src.connect(bp).connect(g).connect(master);
+    src.start(t);
+    src.stop(t + CLACK.decay + 0.02);
+    src.onended = () => { src.disconnect(); bp.disconnect(); g.disconnect(); };
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(f * CLACK.thumpRatio, t);
+    osc.frequency.exponentialRampToValueAtTime(f * CLACK.thumpRatio * 0.7, t + CLACK.decay);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(peak * CLACK.thump, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + CLACK.decay);
+    osc.connect(og).connect(master);
+    osc.start(t);
+    osc.stop(t + CLACK.decay + 0.02);
+    osc.onended = () => { osc.disconnect(); og.disconnect(); };
+  }
+
   // 鳥の鳴き声(DESIGN.md 20章)
   function chirp() {
     if (!ctx) return;
@@ -421,6 +507,8 @@ export function createAudio() {
     setWind,
     horn,
     chirp,
+    bell,
+    clack,
     crash,
     dodge,
     setScene,

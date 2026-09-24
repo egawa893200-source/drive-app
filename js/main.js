@@ -12,6 +12,7 @@ import { createObstacles } from './obstacles.js';
 import { createSettings } from './settings.js';
 import { createEnding } from './ending.js';
 import { createReactions } from './reactions.js';
+import { createCrossing } from './crossing.js';
 import { createDebug } from './debug.js';
 
 const START = 'start';
@@ -37,6 +38,7 @@ const audio = createAudio();
 const obstacles = createObstacles(assets, road, audio, () => player.bounce());
 const ending = createEnding(assets, road);
 const reactions = createReactions(road, audio);
+const crossing = createCrossing(road, audio, assets);
 const debug = createDebug(new URLSearchParams(location.search).has('debug'));
 
 let state = START;
@@ -176,8 +178,11 @@ function frame(now) {
     position = (position + moved) % road.length;
     scenery.update(dt, position, lastPosition);
     reactions.update(dt);
-    // おわりの演出の間は新しい障害物を出さない。すでに出ている物は流れていく
-    obstacles.update(dt, moved, player.x, obstaclesOn && state === PLAY);
+    // 踏切。おわりの演出の間は新しく置かない(DESIGN.md 21章)
+    crossing.update(dt, position, speed, state === PLAY);
+    // おわりの演出の間と、踏切を通るあいだは新しい障害物を出さない。
+    // すでに出ている物は流れていく
+    obstacles.update(dt, moved, player.x, obstaclesOn && state === PLAY && !crossing.active);
     ending.update(dt, moved, speed);
     scenery.setSunset(ending.sunset);
 
@@ -213,6 +218,7 @@ function frame(now) {
       assets: assets.stats(),
       obstacle: obstacles.info,
       reacting: reactions.count,
+      crossing: crossing.info,
       inset: orientation.inset,
       limit: xLimit,
       played: playedSec,
