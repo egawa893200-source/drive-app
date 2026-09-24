@@ -2,7 +2,6 @@
 import { CFG } from './config.js';
 
 const DEG = Math.PI / 180;
-const TAP_MS = 200;
 // 設定を開くジェスチャー(DESIGN.md 14章)。
 // 画面の左上と右下の角(それぞれ短辺の15%四方)を同時に2秒
 const CORNER_RATIO = 0.15;
@@ -26,10 +25,13 @@ function steerAngleDeg(g, rotationDeg) {
   return CFG.STEER_SIGN * Math.asin(s) * 180 / Math.PI;
 }
 
-export function createInput(target, orientation, onTap, onCorners) {
+// hitButton(x, y): その論理座標にあるボタンの id(無ければ null)。
+// onButton(id): ボタンが押されたとき。onCorners: 設定を開くジェスチャーのとき
+export function createInput(target, orientation, { hitButton, onButton, onCorners }) {
   const pointers = new Map();        // pointerId -> -1(左) / +1(右)
-  const pressedAt = new Map();       // pointerId -> 押した時刻
   const spots = new Map();           // pointerId -> 論理座標
+  // ボタンを押している指。左右の操作にも角の判定にも使わない(DESIGN.md 5.4、22章)
+  const buttonPointers = new Set();
   let cornerHeld = 0;                // 角を押し続けている秒数
   let cornerFired = false;
   const keys = { left: false, right: false };
@@ -138,9 +140,16 @@ export function createInput(target, orientation, onTap, onCorners) {
   }
 
   target.addEventListener('pointerdown', (e) => {
+    const spot = orientation.toLogical(e.clientX, e.clientY);
+    const id = hitButton ? hitButton(spot.x, spot.y) : null;
+    if (id) {
+      buttonPointers.add(e.pointerId);
+      if (onButton) onButton(id);
+      e.preventDefault();
+      return;
+    }
     pointers.set(e.pointerId, sideOf(e.clientX, e.clientY));
-    pressedAt.set(e.pointerId, performance.now());
-    spots.set(e.pointerId, orientation.toLogical(e.clientX, e.clientY));
+    spots.set(e.pointerId, spot);
     // 取れないことがあるので、失敗しても操作は続けられるようにする
     try {
       if (target.setPointerCapture) target.setPointerCapture(e.pointerId);
@@ -157,22 +166,14 @@ export function createInput(target, orientation, onTap, onCorners) {
     spots.set(e.pointerId, orientation.toLogical(e.clientX, e.clientY));
   });
 
-  target.addEventListener('pointerup', (e) => {
-    const at = pressedAt.get(e.pointerId);
-    const wasCorner = cornerHeld > 0;
+  // クラクションはボタンで鳴らす(DESIGN.md 22章)。ボタンの外を押して離しても何も鳴らさない
+  function lift(e) {
+    buttonPointers.delete(e.pointerId);
     pointers.delete(e.pointerId);
-    pressedAt.delete(e.pointerId);
     spots.delete(e.pointerId);
-    // 押してすぐ離したらクラクション(DESIGN.md 5.4)。
-    // ただし設定を開くジェスチャーの途中なら鳴らさない
-    if (!wasCorner && at !== undefined && performance.now() - at < TAP_MS && onTap) onTap();
-  });
-
-  target.addEventListener('pointercancel', (e) => {
-    pointers.delete(e.pointerId);
-    pressedAt.delete(e.pointerId);
-    spots.delete(e.pointerId);
-  });
+  }
+  target.addEventListener('pointerup', lift);
+  target.addEventListener('pointercancel', lift);
 
   // PCでの開発用
   window.addEventListener('keydown', (e) => {
@@ -187,8 +188,8 @@ export function createInput(target, orientation, onTap, onCorners) {
   // 画面から離れたときに押しっぱなし扱いが残らないようにする
   window.addEventListener('blur', () => {
     pointers.clear();
-    pressedAt.clear();
     spots.clear();
+    buttonPointers.clear();
     keys.left = false;
     keys.right = false;
   });

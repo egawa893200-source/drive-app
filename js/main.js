@@ -13,6 +13,10 @@ import { createSettings } from './settings.js';
 import { createEnding } from './ending.js';
 import { createReactions } from './reactions.js';
 import { createCrossing } from './crossing.js';
+import { createButtons } from './buttons.js';
+import { createWiper } from './wiper.js';
+import { createLights } from './lights.js';
+import { createAnimals } from './animals.js';
 import { createDebug } from './debug.js';
 
 const START = 'start';
@@ -39,6 +43,10 @@ const obstacles = createObstacles(assets, road, audio, () => player.bounce());
 const ending = createEnding(assets, road);
 const reactions = createReactions(road, audio);
 const crossing = createCrossing(road, audio, assets);
+const buttons = createButtons();
+const wiper = createWiper(audio);
+const lights = createLights(road);
+const animals = createAnimals(road, audio, reactions, assets);
 const debug = createDebug(new URLSearchParams(location.search).has('debug'));
 
 let state = START;
@@ -69,14 +77,35 @@ const settings = createSettings(settingsEl, {
   onRestart: () => restart(),
 });
 
+// ボタンが出ているのは走っている間だけ。起動画面と SLEEP では出さない(DESIGN.md 22章)
+function buttonsShown() {
+  return state === PLAY || state === ENDING;
+}
+
+// 運転席のボタンが押されたとき(DESIGN.md 22章)
+function pressButton(id) {
+  buttons.pressed(id);                   // 押したら必ず沈む
+  if (id === 'horn') {
+    // 鳴ったときだけ、道ばたの物を反応させる(DESIGN.md 20章)
+    if (audio.horn()) reactions.honk(position);
+  } else if (id === 'wiper') {
+    wiper.press();
+  } else if (id === 'animal') {
+    animals.call(position, speed);
+  } else if (id === 'light') {
+    const on = lights.toggle();
+    buttons.setLit(on);
+    audio.click(on);
+  }
+}
+
 // 設定を開けるのは遊んでいる間だけ。起動画面では開かない
-const input = createInput(canvas, orientation, () => {
-  // 眠っているときはタップしても何も起きない(DESIGN.md 11章)
-  if (state !== PLAY && state !== ENDING) return;
-  // 鳴ったときだけ、道ばたの物を反応させる(DESIGN.md 20章)
-  if (audio.horn()) reactions.honk(position);
-}, () => {
-  if (state !== START && state !== PAUSED) settings.open();
+const input = createInput(canvas, orientation, {
+  hitButton: (x, y) => (buttonsShown() ? buttons.hit(x, y) : null),
+  onButton: pressButton,
+  onCorners: () => {
+    if (state !== START && state !== PAUSED) settings.open();
+  },
 });
 
 // 道ばたの物の描き方。反応の途中なら、その動きを足して描く(DESIGN.md 20章)
@@ -89,6 +118,7 @@ function resize() {
   W = orientation.width;
   H = orientation.height;
   xLimit = player.limitFor(W, H, road.carLineHalfWidth(W), orientation.inset);
+  buttons.place(W, H, orientation.inset);
 }
 
 // 画面を消さないようにする(DESIGN.md 15章)。未対応なら何もしない
@@ -178,6 +208,9 @@ function frame(now) {
     position = (position + moved) % road.length;
     scenery.update(dt, position, lastPosition);
     reactions.update(dt);
+    buttons.update(dt);
+    wiper.update(dt);
+    lights.update(dt);
     // 踏切。おわりの演出の間は新しく置かない(DESIGN.md 21章)
     crossing.update(dt, position, speed, state === PLAY, W);
     // おわりの演出の間と、踏切を通るあいだは新しい障害物を出さない。
@@ -202,9 +235,12 @@ function frame(now) {
 
     scenery.drawBackground(ctx, W, H);
     const carLine = road.render(ctx, W, H, position, drawRoadItem, scenery.grassColor());
+    lights.draw(ctx, W, H, position, player.x);  // ヘッドライトは路面を照らす
     obstacles.draw(ctx, W, H, position);
     ending.drawGarage(ctx, W, H, position);      // 車庫は自車より奥にある
     player.draw(ctx, W, H, carLine);
+    wiper.draw(ctx, W, H);                       // ワイパーは画面の手前
+    buttons.draw(ctx);
     ending.drawOverlay(ctx, W, H);               // 夕焼けと暗転は画面全体にかける
   }
 
@@ -219,6 +255,7 @@ function frame(now) {
       obstacle: obstacles.info,
       reacting: reactions.count,
       crossing: crossing.info,
+      light: lights.on,
       inset: orientation.inset,
       limit: xLimit,
       played: playedSec,

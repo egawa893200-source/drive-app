@@ -9,6 +9,7 @@ const KIND = {
   owl: 'fly',
   cow: 'look',
   dog: 'look',
+  duck: 'look',
   tree_round: 'sway',
   tree_tall: 'sway',
   bush: 'sway',
@@ -29,6 +30,8 @@ const FLY_DRIFT = 0.8;     // 横に流れる量。自分の幅に対する比
 const HOP_RATIO = 0.25;    // ぴょこんと跳ねる高さ。自分の高さに対する比
 const HOP_PART = 0.35;     // 跳ねるのは反応時間のうち最初のこれだけ
 const SWAY_CYCLES = 2.5;   // 左右にゆれる回数
+const POP_SEC = 0.4;       // どうぶつボタンで出てくるときの、ぴょこっと(DESIGN.md 22章)
+const POP_OVER = 1.15;     // いったん少し大きくなってから戻る
 
 export function createReactions(road, audio) {
   const active = [];     // 反応している最中の物
@@ -50,6 +53,12 @@ export function createReactions(road, audio) {
       lastChirpAt = now;
       audio.chirp();
     }
+  }
+
+  // 地面からぴょこっと出てくる(どうぶつボタン)
+  function pop(item) {
+    item.react = { kind: 'pop', t: 0, sec: POP_SEC };
+    active.push(item);
   }
 
   function update(dt) {
@@ -75,6 +84,19 @@ export function createReactions(road, audio) {
     if (r.kind === 'gone') return;
 
     const k = Math.min(1, r.t / r.sec);
+
+    if (r.kind === 'pop') {
+      // 下端を軸に 0 → 少し大きく → 元の大きさ
+      const s = k < 0.6
+        ? POP_OVER * Math.sin((k / 0.6) * Math.PI / 2)
+        : POP_OVER - (POP_OVER - 1) * ((k - 0.6) / 0.4);
+      ctx.save();
+      ctx.translate(x + w / 2, y + h);
+      ctx.scale(s, s);
+      draw(ctx, item.name, -w / 2, -h, w, h);
+      ctx.restore();
+      return;
+    }
 
     if (r.kind === 'fly') {
       ctx.save();
@@ -104,5 +126,5 @@ export function createReactions(road, audio) {
     ctx.restore();
   }
 
-  return { honk, update, drawItem, get count() { return active.length; } };
+  return { honk, pop, update, drawItem, get count() { return active.length; } };
 }

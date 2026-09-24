@@ -68,6 +68,13 @@ export const CFG = {
   CROSSING_CLEAR_AT: 0.7,      // 電車の最後尾が道から出る。カンカンもここで止む
   CROSSING_BELL_INTERVAL: 0.45, // カンカンの間隔
 
+  // 運転席のボタン(段階11、DESIGN.md 22章)
+  BUTTON_RADIUS_RATIO: 0.11,   // ボタンの半径(画面の短辺比)。iPhoneで直径およそ14mm
+  WIPER_SEC: 1.3,              // ワイパーが1往復する秒数
+  ANIMAL_AHEAD_SEC: 2.2,       // どうぶつを何秒先の道ばたに出すか。近すぎるとすぐ通り過ぎる
+  ANIMAL_GAP_SEC: 0.6,         // どうぶつを続けて出さない間隔
+  HEADLIGHT_ALPHA: 0.4,        // ライトの明るさ(手前)
+
   // 時間処理
   MAX_DT: 0.05,
   MAX_DPR: 2,

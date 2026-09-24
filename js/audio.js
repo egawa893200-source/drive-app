@@ -80,6 +80,16 @@ const BELL = {
 // 低いほうはBGMと音域が近く埋もれやすいので、少し大きくする(lowBoost)
 const CLACK = { gain: 0.10, freqs: [900, 620], q: 2.5, decay: 0.08, thump: 0.35, thumpRatio: 0.18, lowBoost: 1.8 };
 
+// 運転席のボタンの音(DESIGN.md 22章)
+// ワイパーのキュッキュッ。ゴムがガラスをこする高い音を、行きと帰りに1回ずつ
+const WIPER = { gain: 0.045, from: 950, to: 1350, dur: 0.15, wobble: 30, depth: 70, band: 1500, q: 2.5, at: [0.25, 0.75] };
+// ライトのカチッ。点けるときは高く、消すときは低く
+const CLICK = { gain: 0.035, on: 1800, off: 1400, dur: 0.03 };
+// 動物の鳴き声。ノコギリ波の高さを動かし、口の形をフィルターで作る
+const DOG = { gain: 0.12, at: [0, 0.22], pitch: [420, 560, 330], band: 1000, q: 1.1, dur: 0.15 };
+const COW = { gain: 0.14, pitch: [118, 132, 100], mouth: [300, 1000, 450], q: 3, dur: 1.2, vibrato: 5, depth: 2 };
+const DUCK = { gain: 0.12, at: [0, 0.24], pitch: [290, 250], bands: [[1100, 4], [2300, 5]], dur: 0.17 };
+
 // 衝突と回避(DESIGN.md 10章)。どちらもやわらかい音にする
 const CRASH = { gain: 0.10, from: 600, to: 300, fall: 0.2, tail: 0.3 };
 const DODGE = { gain: 0.055, notes: [523, 659, 784], step: 0.07, dur: 0.16 };
@@ -367,6 +377,151 @@ export function createAudio() {
     osc.onended = () => { osc.disconnect(); og.disconnect(); };
   }
 
+  // 鳴らし終わったら外す
+  function release(nodes, osc) {
+    osc.onended = () => { for (const n of nodes) n.disconnect(); };
+  }
+
+  // ワイパーが1往復するあいだに、キュッキュッと2回鳴らす(DESIGN.md 22章)
+  function wiper(sec) {
+    if (!ctx) return;
+    for (const f of WIPER.at) {
+      const t = ctx.currentTime + sec * f;
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(WIPER.from, t);
+      osc.frequency.linearRampToValueAtTime(WIPER.to, t + WIPER.dur);
+      // こすれる感じを出すため、音の高さを細かく揺らす
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = WIPER.wobble;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = WIPER.depth;
+      lfo.connect(lfoGain).connect(osc.frequency);
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = WIPER.band;
+      bp.Q.value = WIPER.q;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(WIPER.gain, t + 0.02);
+      g.gain.linearRampToValueAtTime(0, t + WIPER.dur);
+      osc.connect(bp).connect(g).connect(master);
+      osc.start(t);
+      lfo.start(t);
+      osc.stop(t + WIPER.dur + 0.02);
+      lfo.stop(t + WIPER.dur + 0.02);
+      release([osc, lfo, lfoGain, bp, g], osc);
+    }
+  }
+
+  // ライトを点けた・消した(DESIGN.md 22章)
+  function click(on) {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.value = on ? CLICK.on : CLICK.off;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(CLICK.gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + CLICK.dur);
+    osc.connect(g).connect(master);
+    osc.start(t);
+    osc.stop(t + CLICK.dur + 0.01);
+    release([osc, g], osc);
+  }
+
+  // ワンワン: 短く上がって下がる声を2回
+  function dog(t0) {
+    for (const at of DOG.at) {
+      const t = t0 + at;
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(DOG.pitch[0], t);
+      osc.frequency.linearRampToValueAtTime(DOG.pitch[1], t + 0.03);
+      osc.frequency.exponentialRampToValueAtTime(DOG.pitch[2], t + DOG.dur * 0.85);
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = DOG.band;
+      bp.Q.value = DOG.q;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(DOG.gain, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t + DOG.dur);
+      osc.connect(bp).connect(g).connect(master);
+      osc.start(t);
+      osc.stop(t + DOG.dur + 0.02);
+      release([osc, bp, g], osc);
+    }
+  }
+
+  // モー: 低い声で、口を閉じた「ン」から開いた「オー」へ、また少し閉じる
+  function cow(t) {
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(COW.pitch[0], t);
+    osc.frequency.linearRampToValueAtTime(COW.pitch[1], t + COW.dur * 0.2);
+    osc.frequency.linearRampToValueAtTime(COW.pitch[2], t + COW.dur * 0.9);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = COW.vibrato;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = COW.depth;
+    lfo.connect(lfoGain).connect(osc.frequency);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = COW.q;
+    lp.frequency.setValueAtTime(COW.mouth[0], t);
+    lp.frequency.linearRampToValueAtTime(COW.mouth[1], t + COW.dur * 0.3);
+    lp.frequency.linearRampToValueAtTime(COW.mouth[2], t + COW.dur * 0.9);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(COW.gain, t + 0.18);
+    g.gain.setValueAtTime(COW.gain, t + COW.dur * 0.7);
+    g.gain.linearRampToValueAtTime(0, t + COW.dur);
+    osc.connect(lp).connect(g).connect(master);
+    osc.start(t);
+    lfo.start(t);
+    osc.stop(t + COW.dur + 0.02);
+    lfo.stop(t + COW.dur + 0.02);
+    release([osc, lfo, lfoGain, lp, g], osc);
+  }
+
+  // ガーガー: 鼻にかかった短い声を2回。2つの帯域を強めて鼻声にする
+  function duck(t0) {
+    for (const at of DUCK.at) {
+      const t = t0 + at;
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(DUCK.pitch[0], t);
+      osc.frequency.linearRampToValueAtTime(DUCK.pitch[1], t + DUCK.dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(DUCK.gain, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.001, t + DUCK.dur);
+      const nodes = [osc, g];
+      for (const [f, q] of DUCK.bands) {
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = f;
+        bp.Q.value = q;
+        osc.connect(bp).connect(g);
+        nodes.push(bp);
+      }
+      g.connect(master);
+      osc.start(t);
+      osc.stop(t + DUCK.dur + 0.02);
+      release(nodes, osc);
+    }
+  }
+
+  // どうぶつボタンで出てきた動物の鳴き声(DESIGN.md 22章)
+  function animal(name) {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    if (name === 'dog') dog(t);
+    else if (name === 'cow') cow(t);
+    else if (name === 'duck') duck(t);
+  }
+
   // 鳥の鳴き声(DESIGN.md 20章)
   function chirp() {
     if (!ctx) return;
@@ -509,6 +664,9 @@ export function createAudio() {
     chirp,
     bell,
     clack,
+    wiper,
+    click,
+    animal,
     crash,
     dodge,
     setScene,

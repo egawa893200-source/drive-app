@@ -319,6 +319,11 @@ export function createRoad() {
     segments[wrapIndex(index)].items = items || [];
   }
 
+  // 今ある物はそのままに、1つ足す(どうぶつボタン、DESIGN.md 22章)
+  function addItem(index, item) {
+    segments[wrapIndex(index)].items.push(item);
+  }
+
   // その地点のカーブ量。遠景の横ずれに使う(DESIGN.md 8.2)
   function curveAt(z) {
     return segmentAt(z).curve;
@@ -331,6 +336,7 @@ export function createRoad() {
     carLineDistance,
     sampleAt,
     setItems,
+    addItem,
     forEachItemAhead,
     setMark,
     isStraightFlat,
