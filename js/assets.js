@@ -30,6 +30,7 @@ const CATALOG = {
   // クラクションに反応する生き物(DESIGN.md 20章): 色つきの円
   bird: { dir: 'roadside', shape: 'circle', color: '#5B6B8A' },
   dog: { dir: 'roadside', shape: 'circle', color: '#C79A5B' },
+  duck: { dir: 'roadside', shape: 'circle', color: '#F0C63E' },
 
   // 朝の草原: 色つきの角丸四角
   cow: { dir: 'meadow', shape: 'block', color: '#F2F2EC' },

@@ -37,7 +37,8 @@ export function createDebug(initial) {
       `played ${num(info.played, 0)}s  end ${info.ending || '-'}`
         + `  react ${num(info.reacting, 0)}`,
       `crossing ${info.crossing ? (info.crossing.phase === 'idle'
-        ? `idle ${num(info.crossing.timer, 0)}s` : info.crossing.phase) : '-'}`,
+        ? `idle ${num(info.crossing.timer, 0)}s` : info.crossing.phase) : '-'}`
+        + `  light ${info.light ? 'on' : 'off'}`,
       `safe L${num(info.inset && info.inset.left, 0)} R${num(info.inset && info.inset.right, 0)}`
         + ` T${num(info.inset && info.inset.top, 0)} B${num(info.inset && info.inset.bottom, 0)}`
         + `  limit ${num(info.limit, 2)}`,
