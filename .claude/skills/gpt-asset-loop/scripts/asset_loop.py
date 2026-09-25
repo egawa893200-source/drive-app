@@ -21,6 +21,7 @@ ROAD_GRAY = (124, 128, 137)
 ICON_BG = (126, 200, 240)
 ICON_SIZES = (180, 192, 512)
 MAGENTA = np.array([255.0, 0.0, 255.0])
+ASPECT_TOLERANCE = 1.35   # 物の形の比が、アプリの比からこれ以上ずれたら知らせる
 
 
 # ---------- 共通 ----------
@@ -96,6 +97,27 @@ def group_title(m, gid):
 
 # ---------- プロンプト ----------
 
+# アプリは画像を、コードで決めた 縦/横 の比(assets.json の aspect)に引き伸ばして描く。
+# 比が違うと絵がゆがむので、プロンプトで形を指定し、取り込みでも比をそろえる
+def shape_words(aspect):
+    """aspect(縦/横)から、ChatGPTに頼む画像の形と、物の形の言い方を返す。"""
+    if aspect >= 1.6:
+        frame, body = "縦長(1024x1536)", "とても縦長"
+    elif aspect >= 1.15:
+        frame, body = "縦長(1024x1536)", "やや縦長"
+    elif aspect > 0.87:
+        frame, body = "正方形(1024x1024)", "ほぼ正方形"
+    elif aspect > 0.5:
+        frame, body = "横長(1536x1024)", "やや横長"
+    else:
+        frame, body = "横長(1536x1024)", "とても横長"
+    if aspect >= 1:
+        ratio = f"横1に対して縦{aspect:g}"
+    else:
+        ratio = f"縦1に対して横{1 / aspect:.1f}".replace(".0", "")
+    return frame, f"物の形は{body}({ratio}くらい)にする。"
+
+
 def build_prompt(m, sh, c):
     def fill(t):
         return t.replace("{character}", c["character"])
@@ -105,9 +127,12 @@ def build_prompt(m, sh, c):
         parts.append(m["anchor"])
     parts.append(fill(sh["prompt"]))
     n = len(sh["items"])
+    aspect = sh["items"][0].get("aspect", 1.0)
+    frame, body = shape_words(aspect)
     if n == 1:
         if sh["type"] != "icon":
             parts.append("物体をひとつだけ画像の中央に大きく配置し、周囲に十分な余白をとる。")
+            parts.append(body)
     else:
         rows = "、".join(f"{i + 1}行目に{k}個" for i, k in enumerate(sh["layout"]))
         parts.append(
@@ -115,7 +140,7 @@ def build_prompt(m, sh, c):
             "重ねたり接したりしない。左上から右へ、次の行へ、の順に:"
         )
         parts += [f"{i + 1}. {fill(it['desc'])}" for i, it in enumerate(sh["items"])]
-    parts.append(f"画像の形は{sh['size']}。")
+    parts.append(f"画像の形は{'正方形(1024x1024)' if sh['type'] == 'icon' else frame}。")
     parts.append(m["style"])
     parts.append(m["palette"])
     if sh["type"] != "icon":
@@ -246,18 +271,30 @@ def split_items(rgba, layout):
     return crops, None, warns
 
 
-def finalize(crop, target):
-    """余白を足し、長辺を target にそろえる。拡大したら True を返す。"""
-    im = Image.fromarray(crop, "RGBA")
-    w, h = im.size
+def finalize(crop, target, aspect=None, anchor="center"):
+    """余白を足して 縦/横 を aspect にそろえ、長辺を target にする。
+    アプリは画像をコードで決めた比に引き伸ばして描くので、比を合わせておかないと絵がゆがむ。
+    anchor="bottom" の物(地面に立つ物)は下に余白を入れない。アプリが画像の下端を地面に置くため。
+    戻り値: (画像, 拡大したか, 物そのものの 縦/横)"""
+    h, w = crop.shape[:2]
+    own = h / w
     pad = int(max(w, h) * 0.04)
-    canvas = Image.new("RGBA", (w + 2 * pad, h + 2 * pad), (0, 0, 0, 0))
-    canvas.paste(im, (pad, pad))
-    W, H = canvas.size
-    s = target / max(W, H)
-    size = (max(1, round(W * s)), max(1, round(H * s)))
+    top, bottom = pad, (0 if anchor == "bottom" else pad)
+    cw, ch = w + 2 * pad, h + top + bottom
+    if aspect:
+        if ch / cw > aspect:
+            cw = ch / aspect          # 物のほうが縦長 → 左右に余白を足す
+        else:
+            ch = cw * aspect          # 物のほうが横長 → 上(と下)に余白を足す
+    cw, ch = max(1, round(cw)), max(1, round(ch))
+    canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    x = (cw - w) // 2
+    y = ch - bottom - h if anchor == "bottom" else (ch - h) // 2
+    canvas.paste(Image.fromarray(crop, "RGBA"), (x, y))
+    s = target / max(cw, ch)
+    size = (max(1, round(cw * s)), max(1, round(ch * s)))
     out = canvas.convert("RGBa").resize(size, Image.LANCZOS).convert("RGBA")
-    return out, s > 1.6
+    return out, s > 1.6, own
 
 
 def has_halo(img):
@@ -451,13 +488,18 @@ def process_one(src, sh, c, m, s):
 
     pairs = []
     for item, crop in zip(sh["items"], crops):
-        out, upscaled = finalize(crop, item["target"])
+        aspect = item.get("aspect")
+        out, upscaled, own = finalize(crop, item["target"], aspect, item.get("anchor", "center"))
         rel = Path("assets/img") / item["dir"] / f"{item['name']}.webp"
         save_both(out, rel, c, "WEBP", quality=c["webp_quality"], method=6)
         pairs.append((item["name"], out))
         print(f"  OK {item['name']:<18} -> {rel.as_posix()} ({out.width}x{out.height})")
         if upscaled:
             warns.append(f"{item['name']} は元が小さく、拡大しています(ぼやける可能性)")
+        if aspect and not (1 / ASPECT_TOLERANCE <= own / aspect <= ASPECT_TOLERANCE):
+            warns.append(
+                f"{item['name']} の形(縦/横 {own:.2f})がアプリの比({aspect:g})と大きく違います。"
+                "余白で合わせたので、アプリでは小さめに見えます。気になれば追記「形の比が違う」で作り直し")
         if has_halo(out):
             warns.append(f"{item['name']} のふちにピンクのにじみがあります")
     for w in warns:
@@ -543,6 +585,88 @@ def cmd_preview_all(args):
     print(f"一覧: {out.relative_to(c['repo_dir'])}({len(pairs)}点)")
 
 
+# ---------- アプリのコードとの照合 ----------
+
+# コードが正方形(幅=高さ)で描く素材。比の書き方がほかと違うので、ここに書いておく
+#   自車: player.js drawCar が size×size で描く / おやすみ: ending.js が size×size で描く
+CODE_SQUARE = {"car_red", "car_blue", "car_yellow", "car_white", "goodnight"}
+
+
+def code_catalog(repo):
+    """js/assets.js の CATALOG から 素材名 -> 保存先フォルダ を読む。"""
+    import re
+    src = (repo / "js" / "assets.js").read_text(encoding="utf-8")
+    return dict(re.findall(r"^\s*(\w+): \{ dir: '(\w+)'", src, re.M))
+
+
+def code_aspects(repo):
+    """js/ の中から、素材ごとの 縦/横 の比を集める。同じ素材に違う比があれば全部返す。"""
+    import re
+    found = {}
+
+    def add(name, val, where):
+        found.setdefault(name, set()).add((round(float(val), 4), where))
+
+    for js in sorted((repo / "js").glob("*.js")):
+        src = js.read_text(encoding="utf-8")
+        # scenery.js: tree_round: { size: 0.55, aspect: 1.15 } / cloud: { width: 0.16, aspect: 0.42 }
+        for name, val in re.findall(r"^\s*(\w+): \{ (?:size|width): [\d.]+, aspect: ([\d.]+) \}", src, re.M):
+            add(name, val, js.name)
+        # obstacles.js / crossing.js / animals.js: { name: 'frog', size: 0.10, aspect: 0.95 }
+        for name, val in re.findall(r"\{ name: '(\w+)'[^}]*?aspect: ([\d.]+)", src):
+            add(name, val, js.name)
+        # crossing.js: const TRAIN = { ..., aspect: 0.42 } / ending.js: const GARAGE = { ..., aspect: 0.55 }
+        for const, name in (("TRAIN", "train"), ("GARAGE", "garage")):
+            mm = re.search(rf"const {const} = \{{[^}}]*aspect: ([\d.]+)", src)
+            if mm:
+                add(name, mm.group(1), js.name)
+    for name in CODE_SQUARE:
+        add(name, 1.0, "正方形で描く")
+    return found
+
+
+def cmd_sync_check(_):
+    """assets.json とアプリのコード(js/)が合っているか確かめる。
+    素材の名前・保存先・縦横の比がずれていたら知らせる。コードを変えたあとに必ず実行する。"""
+    c = load_config()
+    m = load_manifest()
+    repo = c["repo_dir"]
+    catalog = code_catalog(repo)
+    aspects = code_aspects(repo)
+    items = {it["name"]: it for sh in m["sheets"] if sh["type"] != "icon" for it in sh["items"]}
+    problems = []
+
+    for name, d in sorted(catalog.items()):
+        if name not in items:
+            problems.append(f"コードにあるのに assets.json に無い: {name}(assets/img/{d}/)")
+        elif items[name]["dir"] != d:
+            problems.append(f"保存先が違う: {name} コード={d} / assets.json={items[name]['dir']}")
+    for name in sorted(items):
+        if name not in catalog:
+            problems.append(f"assets.json にあるのにコード(assets.js の CATALOG)に無い: {name}")
+
+    for name, it in sorted(items.items()):
+        vals = aspects.get(name)
+        if not vals:
+            problems.append(f"コードの中に {name} の縦横比が見つからない")
+            continue
+        nums = {v for v, _ in vals}
+        if len(nums) > 1:
+            where = "、".join(f"{w}={v:g}" for v, w in sorted(vals, key=lambda x: x[1]))
+            problems.append(f"コードの中で {name} の縦横比が場所によって違う: {where}")
+        code = next(iter(nums)) if len(nums) == 1 else None
+        if code is not None and abs(code - it.get("aspect", 0)) > 1e-3:
+            problems.append(f"縦横比が違う: {name} コード={code:g} / assets.json={it.get('aspect')}")
+
+    print(f"コードの素材 {len(catalog)} 点 / assets.json の素材 {len(items)} 点(アイコン除く)")
+    if problems:
+        for p in problems:
+            print(f"  NG {p}")
+        print("assets.json を直してから素材づくりを進めてください。")
+        sys.exit(1)
+    print("すべて合っています。")
+
+
 def main():
     ap = argparse.ArgumentParser(description="GPT素材生成ループ")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -554,6 +678,7 @@ def main():
     p = sub.add_parser("reset"); p.add_argument("sheet"); p.set_defaults(fn=cmd_reset)
     sub.add_parser("check").set_defaults(fn=cmd_check)
     p = sub.add_parser("preview-all"); p.add_argument("--group"); p.set_defaults(fn=cmd_preview_all)
+    sub.add_parser("sync-check").set_defaults(fn=cmd_sync_check)
     args = ap.parse_args()
     args.fn(args)
 
