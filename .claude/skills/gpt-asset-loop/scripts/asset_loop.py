@@ -378,22 +378,79 @@ def cmd_prompt(args):
     print("=====")
 
 
+ZIP_MAX_BYTES = 40 * 1024 * 1024   # 展開した1ファイルの上限。これより大きい物は画像ではないとみなす
+
+
+def unpack_zips(inbox):
+    """inbox の zip(ChatGPTでまとめて出した物)を展開して消す。
+    フォルダ構造は捨てて、画像だけを inbox の直下に出す(zip の中のパスは信用しない)。"""
+    import zipfile
+    for z in sorted(inbox.glob("*.zip")):
+        n = 0
+        with zipfile.ZipFile(z) as zf:
+            for info in zf.infolist():
+                name = Path(info.filename).name
+                if info.is_dir() or name.startswith(".") or "__MACOSX" in info.filename:
+                    continue
+                if Path(name).suffix.lower() not in IMG_EXT or info.file_size > ZIP_MAX_BYTES:
+                    print(f"WARN: {z.name} の {info.filename} は画像ではないので取り出しませんでした")
+                    continue
+                dest = inbox / name
+                if dest.exists():
+                    dest = inbox / f"{Path(name).stem}_{z.stem}{Path(name).suffix}"
+                dest.write_bytes(zf.read(info))
+                n += 1
+        z.unlink()
+        print(f"{z.name} から画像を{n}枚取り出しました")
+
+
 def inbox_files(c):
     """inbox の画像をファイル名の順(IMG_0012 < IMG_0103 のような自然順)に返す。
-    git で取得したファイルは更新日時が当てにならないため、名前で並べる。"""
+    git で取得したファイルは更新日時が当てにならないため、名前で並べる。
+    zip があれば先に展開する。"""
     inbox = c["inbox_dir"]
     if not inbox.exists():
         die(f"inbox フォルダがありません: {inbox}(git pull を忘れていないか確認)")
+    unpack_zips(inbox)
     files = [p for p in inbox.iterdir() if p.is_file() and p.suffix.lower() in IMG_EXT]
     if not files:
         die("inbox に画像がありません。GitHubにアップロードしたら git pull してから実行してください。")
     return sorted(files, key=natural_key)
 
 
+def named_sheet(src, m):
+    """ファイル名から素材を決める。素材ID(ref_car)、素材名(car_red)、
+    番号付き(01_car_red, 1-car_red)のどれでもよい。当てはまらなければ None。"""
+    import re
+    stem = re.sub(r"^\d+[_\-. ]*", "", src.stem.lower())
+    stem = re.sub(r"\s*\(\d+\)$", "", stem)        # 同じ名前を保存したときに付く「 (1)」
+    for sh in m["sheets"]:
+        if stem == sh["id"] or stem in (it["name"] for it in sh["items"]):
+            return sh
+    return None
+
+
 def sheet_for_file(src, m, s):
-    """ファイル名が素材ID(例: frog.png)ならその素材。違えば未着手の最初の素材。"""
-    ids = {sh["id"]: sh for sh in m["sheets"]}
-    return ids.get(src.stem.lower()) or next_pending(m, s)
+    """ファイル名が素材なら、その素材。違えば未着手の最初の素材。"""
+    return named_sheet(src, m) or next_pending(m, s)
+
+
+def plan_inbox(files, m, s):
+    """inbox の各ファイルをどの素材として取り込むか決める。
+    名前が素材に当てはまるファイルを先に割り当て、残りのファイルを、
+    まだ誰も取っていない未着手の素材へ、ファイル名の順に割り当てる。
+    戻り値: [(ファイル, 素材 または None, 名前で決まったか)]"""
+    named = {f: named_sheet(f, m) for f in files}
+    taken = {sh["id"] for sh in named.values() if sh}
+    free = [sh for sh in m["sheets"]
+            if s[sh["id"]]["state"] in ("pending", "retry") and sh["id"] not in taken]
+    plan = []
+    for f in files:
+        if named[f]:
+            plan.append((f, named[f], True))
+        else:
+            plan.append((f, free.pop(0) if free else None, False))
+    return plan
 
 
 def archive(src, c, sh):
@@ -422,11 +479,15 @@ def cmd_ingest(args):
     s = load_status(m)
     files = inbox_files(c)
     if args.all:
-        for src in files:
-            sh = sheet_for_file(src, m, s)
+        plan = plan_inbox(files, m, s)
+        # 名前で決まった物を先に取り込む(名前の無い物が、その素材を先に取らないように)
+        for src, sh, by_name in sorted(plan, key=lambda x: not x[2]):
             if sh is None:
-                print(f"WARN: 未着手の素材がもうありません。{src.name} は取り込みませんでした")
-                break
+                print(f"WARN: 割り当てる素材がありません。{src.name} は取り込みませんでした")
+                continue
+            if not by_name:
+                print(f"WARN: {src.name} は名前が素材に当てはまらないので、順番で {sh['id']} にしました。"
+                      "プレビューで絵が合っているか必ず確かめてください")
             process_one(src, sh, c, m, s)
             print()
         return
@@ -593,8 +654,8 @@ def cmd_preview_all(args):
 PART_SIZE = 16
 
 
-def list_line(no, sh, c):
-    """リストの1行。番号、名前、画像の形、描く物、物の形。"""
+def list_line(no, sh, c, filename=False):
+    """リストの1行。番号、名前(filename なら保存するファイル名)、画像の形、描く物、物の形。"""
     # 一覧で渡すときは、見本の車を番号で指す
     fill = lambda t: (t.replace("{character}", c["character"])
                       .replace("最初に採用した赤い車", "1番の赤い車").replace("採用した赤い車", "1番の赤い車"))
@@ -603,7 +664,49 @@ def list_line(no, sh, c):
         frame, body = "正方形(1024x1024)", "この絵だけは背景を透明にせず、画像全体を塗りつぶす。"
     else:
         frame, body = shape_words(it.get("aspect", 1.0))
-    return f"{no}. {it['name']}【画像の形: {frame}】{fill(sh['prompt'])} {body}"
+    label = f"{it['name']}.png" if filename else it["name"]
+    return f"{no}. {label}【画像の形: {frame}】{fill(sh['prompt'])} {body}"
+
+
+ZIP_LIMIT_MB = 20   # GitHub のブラウザからのアップロードは1ファイル25MBまで。余裕をみて20MB
+
+
+def auto_text(m, c, todo):
+    """待たずに続けて描き、最後にファイル名をつけて zip にまとめてもらう文。"""
+    lines = [
+        "これから、1〜2歳の子ども向けアプリで使う絵を、下のリストの順に全部描いてもらいます。",
+        "",
+        "【進め方】",
+        "- 1番の赤い車は全部の絵の見本なので、1番だけは描いたら止まって、私の確認を待つ。"
+        "私が「OK」と送ったら、2番から最後まで続ける。",
+        "- 2番からは、1枚描いたら私の返事を待たずに、そのまま次の番号を描く。リストの最後まで続ける。",
+        "- 1回の返事で続けて描けない場合は、描けるところまで描いて止まってよい。"
+        "私が「続けて」と送ったら、続きの番号から再開する。",
+        "- 描くたびに、絵の下の文章に「番号. ファイル名」だけ書く(例: 3. car_yellow.png)。絵の中には文字を入れない。",
+        "- 1枚の絵に描く物は、指定した物1つだけ。画像の中央に大きく描き、周りに十分な余白をとる。",
+        "- 私が「◯番をやり直し」と送ったら、その番号だけ描き直す。注文が書いてあれば、それに合わせて直す。",
+        "",
+        "【すべての絵に共通の決まり】",
+        m["style"],
+        m["palette"],
+        m["background"],
+        "- 1番の赤い車が、全部の絵の見本。ほかの絵は、1番の車と同じタッチ・塗り方・丸み・色の明るさで描く。",
+        "- 画像の形(正方形・縦長・横長)と物の形は、番号ごとの指定に合わせる。",
+        "",
+        "【全部描き終えたら】",
+        "- 描いた画像を、リストのファイル名(例: car_red.png)でPNGとして保存し、zipファイルにまとめてダウンロードできるようにする。"
+        "やり直した番号は、最後に描いた物を使う。",
+        f"- zipは1つ{ZIP_LIMIT_MB}MB以下にする。超える場合は assets_1.zip、assets_2.zip のように分ける。",
+        "- zipが作れない場合は、そう伝える(そのときは私が1枚ずつ保存する)。",
+        "",
+        "【リスト】",
+    ]
+    if todo[0][0] != 1:
+        lines = [ln for ln in lines if not ln.startswith("- 1番の赤い車は全部の絵の見本なので")]
+        lines = [ln.replace("- 2番からは、1枚描いたら", "- 1枚描いたら") for ln in lines]
+    lines += [list_line(no, sh, c, filename=True) for no, sh in todo]
+    lines += ["", f"では、{todo[0][0]}番から描いてください。"]
+    return "\n".join(lines)
 
 
 def cmd_chatgpt_list(args):
@@ -614,6 +717,12 @@ def cmd_chatgpt_list(args):
     todo = [(no, sh) for no, sh in numbered if s[sh["id"]]["state"] in ("pending", "retry")]
     if not todo:
         print("未着手の素材はありません。")
+        return
+    if args.auto:
+        text = auto_text(m, c, todo)
+        print(f"===== ChatGPTに貼る文(続けて描いて zip にまとめる版、{len(todo)}点、{len(text)}文字) =====")
+        print(text)
+        print("=====")
         return
     parts = [todo[i:i + PART_SIZE] for i in range(0, len(todo), PART_SIZE)]
     k = args.part or 1
@@ -661,17 +770,13 @@ def cmd_inbox_preview(_):
     m = load_manifest()
     s = load_status(m)
     files = inbox_files(c)
-    pending = [sh for sh in m["sheets"] if s[sh["id"]]["state"] in ("pending", "retry")]
-    ids = {sh["id"] for sh in m["sheets"]}
     pairs = []
-    k = 0
     print("番号  ファイル名 -> このまま ingest --all したときの割り当て")
-    for i, f in enumerate(files, start=1):
-        if f.stem.lower() in ids:
-            guess = f.stem.lower() + "(名前どおり)"
+    for i, (f, sh, by_name) in enumerate(plan_inbox(files, m, s), start=1):
+        if sh is None:
+            guess = "(割り当てなし)"
         else:
-            guess = pending[k]["id"] if k < len(pending) else "(割り当てなし)"
-            k += 1
+            guess = sh["id"] + ("(名前どおり)" if by_name else "(順番で。名前が当てはまらない)")
         print(f"{i:>3}  {f.name} -> {guess}")
         im = Image.open(f)
         im.thumbnail((400, 400))
@@ -774,7 +879,9 @@ def main():
     sub.add_parser("check").set_defaults(fn=cmd_check)
     p = sub.add_parser("preview-all"); p.add_argument("--group"); p.set_defaults(fn=cmd_preview_all)
     sub.add_parser("sync-check").set_defaults(fn=cmd_sync_check)
-    p = sub.add_parser("chatgpt-list"); p.add_argument("--part", type=int); p.set_defaults(fn=cmd_chatgpt_list)
+    p = sub.add_parser("chatgpt-list"); p.add_argument("--part", type=int)
+    p.add_argument("--auto", action="store_true", help="待たずに続けて描き、最後に zip にまとめてもらう文")
+    p.set_defaults(fn=cmd_chatgpt_list)
     sub.add_parser("inbox-preview").set_defaults(fn=cmd_inbox_preview)
     args = ap.parse_args()
     args.fn(args)
