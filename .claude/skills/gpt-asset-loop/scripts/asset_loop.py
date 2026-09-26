@@ -585,6 +585,101 @@ def cmd_preview_all(args):
     print(f"一覧: {out.relative_to(c['repo_dir'])}({len(pairs)}点)")
 
 
+# ---------- ChatGPT で「次」を送るだけで続けて描かせる ----------
+# 1点ずつプロンプトを貼るのは手間なので、決まりとリストを最初に1回だけ渡し、
+# あとは「次」と送るだけで、ChatGPTがリストの順に1枚ずつ描くようにする。
+# 長い会話では最初の指示を忘れやすいので、リストはいくつかに分けて渡す
+
+PART_SIZE = 16
+
+
+def list_line(no, sh, c):
+    """リストの1行。番号、名前、画像の形、描く物、物の形。"""
+    # 一覧で渡すときは、見本の車を番号で指す
+    fill = lambda t: (t.replace("{character}", c["character"])
+                      .replace("最初に採用した赤い車", "1番の赤い車").replace("採用した赤い車", "1番の赤い車"))
+    it = sh["items"][0]
+    if sh["type"] == "icon":
+        frame, body = "正方形(1024x1024)", "この絵だけは背景を透明にせず、画像全体を塗りつぶす。"
+    else:
+        frame, body = shape_words(it.get("aspect", 1.0))
+    return f"{no}. {it['name']}【画像の形: {frame}】{fill(sh['prompt'])} {body}"
+
+
+def cmd_chatgpt_list(args):
+    c = load_config()
+    m = load_manifest()
+    s = load_status(m)
+    numbered = list(enumerate(m["sheets"], start=1))
+    todo = [(no, sh) for no, sh in numbered if s[sh["id"]]["state"] in ("pending", "retry")]
+    if not todo:
+        print("未着手の素材はありません。")
+        return
+    parts = [todo[i:i + PART_SIZE] for i in range(0, len(todo), PART_SIZE)]
+    k = args.part or 1
+    if not 1 <= k <= len(parts):
+        die(f"part は 1〜{len(parts)} です")
+    chunk = parts[k - 1]
+    first = chunk[0][0] == 1
+    lines = []
+    if first:
+        lines.append("これから、1〜2歳の子ども向けアプリで使う絵を、1枚ずつ描いてもらいます。")
+    else:
+        lines.append("続きのリストです。進め方と決まりは前と同じです。念のためもう一度書きます。")
+    lines += [
+        "",
+        "【進め方】",
+        "- 1回の返事で描く絵は1枚だけ。リストを上から順に描く。",
+        "- 私が「次」と送ったら、リストの次の番号を描く。",
+        "- 私が「やり直し」と送ったら、同じ番号をもう一度描く。注文が書いてあれば、それに合わせて直す。",
+        "- 描いたら、絵の下の文章に「番号. 名前」だけ書く(例: 3. car_yellow)。絵の中には文字を入れない。",
+        "- 1枚の絵に描く物は、指定した物1つだけ。画像の中央に大きく描き、周りに十分な余白をとる。",
+        "",
+        "【すべての絵に共通の決まり】",
+        m["style"],
+        m["palette"],
+        m["background"],
+        "- 1番の赤い車が、全部の絵の見本。ほかの絵は、1番の車と同じタッチ・塗り方・丸み・色の明るさで描く。",
+        "- 画像の形(正方形・縦長・横長)と物の形は、番号ごとの指定に合わせる。",
+        "",
+        f"【リスト(その{k} / 全{len(parts)})】",
+    ]
+    lines += [list_line(no, sh, c) for no, sh in chunk]
+    lines += ["", f"では、{chunk[0][0]}番を描いてください。"]
+    text = "\n".join(lines)
+    print(f"===== ChatGPTに貼る文(その{k} / 全{len(parts)}、{len(chunk)}点、{len(text)}文字) =====")
+    print(text)
+    print("=====")
+    if k < len(parts):
+        print(f"このリストを描き終えたら: chatgpt-list --part {k + 1}")
+
+
+def cmd_inbox_preview(_):
+    """inbox の画像を1枚の一覧にする。取り込む前に、どの絵がどの素材かを見て確かめるため。
+    ファイル名を素材ID(例: frog.png)に変えておけば、ingest --all は名前どおりに取り込む。"""
+    c = load_config()
+    m = load_manifest()
+    s = load_status(m)
+    files = inbox_files(c)
+    pending = [sh for sh in m["sheets"] if s[sh["id"]]["state"] in ("pending", "retry")]
+    ids = {sh["id"] for sh in m["sheets"]}
+    pairs = []
+    k = 0
+    print("番号  ファイル名 -> このまま ingest --all したときの割り当て")
+    for i, f in enumerate(files, start=1):
+        if f.stem.lower() in ids:
+            guess = f.stem.lower() + "(名前どおり)"
+        else:
+            guess = pending[k]["id"] if k < len(pending) else "(割り当てなし)"
+            k += 1
+        print(f"{i:>3}  {f.name} -> {guess}")
+        im = Image.open(f)
+        im.thumbnail((400, 400))
+        pairs.append((f"{i}: {f.name}", im.convert("RGBA")))
+    out = make_preview(pairs, c["preview_dir"] / "inbox.png", per_row=4)
+    print(f"一覧: {out.relative_to(c['repo_dir'])}")
+
+
 # ---------- アプリのコードとの照合 ----------
 
 # コードが正方形(幅=高さ)で描く素材。比の書き方がほかと違うので、ここに書いておく
@@ -679,6 +774,8 @@ def main():
     sub.add_parser("check").set_defaults(fn=cmd_check)
     p = sub.add_parser("preview-all"); p.add_argument("--group"); p.set_defaults(fn=cmd_preview_all)
     sub.add_parser("sync-check").set_defaults(fn=cmd_sync_check)
+    p = sub.add_parser("chatgpt-list"); p.add_argument("--part", type=int); p.set_defaults(fn=cmd_chatgpt_list)
+    sub.add_parser("inbox-preview").set_defaults(fn=cmd_inbox_preview)
     args = ap.parse_args()
     args.fn(args)
 
