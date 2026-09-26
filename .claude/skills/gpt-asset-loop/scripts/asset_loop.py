@@ -709,6 +709,95 @@ def auto_text(m, c, todo):
     return "\n".join(lines)
 
 
+# ---------- ChatGPT 側のスキル(生成 → 完了を確かめる → 次を生成 のループ) ----------
+# ChatGPT のスキルは Claude と同じ形式(SKILL.md のフォルダ)。zip にしてユーザーが ChatGPT に登録する。
+# スキルが使えない場合も、同じ中身をプロジェクトやマイGPTの指示として使える
+
+CHATGPT_SKILL_NAME = "drive-app-images"
+
+
+def chatgpt_skill_md(m):
+    return "\n".join([
+        "---",
+        f"name: {CHATGPT_SKILL_NAME}",
+        "description: 1〜2歳向けドライブアプリの絵(47点)を、references/list.md の順に1枚ずつ生成し、"
+        "1枚できるたびに完了を確かめて次へ進むループを、最後まで回す。「素材を作って」「絵を作って」"
+        "「続けて」「◯番をやり直し」と言われたら必ずこのスキルを使う。",
+        "---",
+        "",
+        "# ドライブアプリの絵を、順番に最後まで作る",
+        "",
+        "references/list.md に、描く絵が番号順に並んでいる。1番から最後まで、次のループで1枚ずつ作る。",
+        "",
+        "## ループ(必ずこの順で)",
+        "",
+        "1. **始める**: references/list.md を読み、進み具合の表(番号・ファイル名・状態)を作る。"
+        "「続けて」と言われたときは、まだ完了していない最初の番号から始める。",
+        "2. **生成**: その番号の絵を、画像生成で1枚だけ作る。1回の画像生成で描く物は1つだけ。"
+        "リストの「画像の形」と「物の形」、下の「共通の決まり」を必ず守る。",
+        "3. **完了を確かめる**: 画像が最後まで生成されて表示されたことを確かめる。"
+        "失敗した・途中で止まった・物が2つ以上描かれた・文字が入った場合は、同じ番号をもう一度生成する(2回まで)。"
+        "それでもだめなら「◯番: 作れませんでした」と書いて次へ進む。",
+        "4. **記録**: 画像の下に「✅ 番号. ファイル名」とだけ書き、進み具合の表の状態を「完了」にする。"
+        "画像の中には文字を入れない。",
+        "5. **次へ**: ユーザーの返事を待たずに、次の番号で 2 に戻る。最後の番号まで続ける。",
+        "   - **例外: 1番(赤い車)は全部の絵の見本なので、1番だけは完了したら止まり、ユーザーの「OK」を待つ。**"
+        "「やり直し」と言われたら、注文に合わせて1番を作り直す。",
+        "6. **続けられなくなったら**: 1回の返事で生成を続けられなくなったら、"
+        "「◯番まで完了しました。『続けて』と送ると◯番から再開します」と書いて止まる。",
+        "7. **全部できたら**: 各番号の最後に作った画像を、リストのファイル名(例: car_red.png)のPNGにし、"
+        f"zipファイルにまとめてダウンロードできるようにする。zipは1つ{ZIP_LIMIT_MB}MB以下"
+        "(超えるときは assets_1.zip、assets_2.zip と分ける)。zipが作れない場合はそう伝える。",
+        "",
+        "## やり直し",
+        "",
+        "- 「◯番をやり直し(注文)」と言われたら、その番号だけ注文に合わせて作り直し、その番号を最新の画像に置き換える。",
+        "- やり直したあとは、止まる前に作っていた番号の続きに戻る。",
+        "",
+        "## 共通の決まり(すべての絵)",
+        "",
+        m["style"],
+        "",
+        m["palette"],
+        "",
+        m["background"],
+        "",
+        "- 1番の赤い車が、全部の絵の見本。ほかの絵は、1番の車と同じタッチ・塗り方・丸み・色の明るさで描く。",
+        "- 物は画像の中央に大きく1つだけ描き、周りに十分な余白をとる。地面・背景の風景・ほかの物は描かない"
+        "(リストに書いてある物は除く)。",
+        "- 画像の形(正方形・縦長・横長)と物の形は、番号ごとの指定に合わせる。",
+        "",
+    ])
+
+
+def chatgpt_skill_list(m, c):
+    lines = ["# 描く絵のリスト", "",
+             "番号の順に描く。ファイル名は、zipにまとめるときの名前。", ""]
+    for no, sh in enumerate(m["sheets"], start=1):
+        lines.append(list_line(no, sh, c, filename=True))
+        lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_chatgpt_skill(args):
+    """ChatGPT に登録するスキル(フォルダと zip)を作る。"""
+    import zipfile
+    c = load_config()
+    m = load_manifest()
+    out = Path(args.out).resolve()
+    root = out / CHATGPT_SKILL_NAME
+    (root / "references").mkdir(parents=True, exist_ok=True)
+    (root / "SKILL.md").write_text(chatgpt_skill_md(m), encoding="utf-8")
+    (root / "references" / "list.md").write_text(chatgpt_skill_list(m, c), encoding="utf-8")
+    z = out / f"{CHATGPT_SKILL_NAME}.zip"
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(root.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(out).as_posix())
+    print(f"スキルのフォルダ: {root}")
+    print(f"登録用のzip: {z}({z.stat().st_size} バイト)")
+
+
 def cmd_chatgpt_list(args):
     c = load_config()
     m = load_manifest()
@@ -883,6 +972,8 @@ def main():
     p.add_argument("--auto", action="store_true", help="待たずに続けて描き、最後に zip にまとめてもらう文")
     p.set_defaults(fn=cmd_chatgpt_list)
     sub.add_parser("inbox-preview").set_defaults(fn=cmd_inbox_preview)
+    p = sub.add_parser("chatgpt-skill"); p.add_argument("--out", required=True)
+    p.set_defaults(fn=cmd_chatgpt_skill)
     args = ap.parse_args()
     args.fn(args)
 
