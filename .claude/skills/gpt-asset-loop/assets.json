@@ -268,6 +268,9 @@
           "aspect": 0.9,
           "anchor": "bottom"
         }
+      ],
+      "refs": [
+        "ducks"
       ]
     },
     {
