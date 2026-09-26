@@ -21,6 +21,7 @@ ROAD_GRAY = (124, 128, 137)
 ICON_BG = (126, 200, 240)
 ICON_SIZES = (180, 192, 512)
 MAGENTA = np.array([255.0, 0.0, 255.0])
+ASPECT_TOLERANCE = 1.35   # 物の形の比が、アプリの比からこれ以上ずれたら知らせる
 
 
 # ---------- 共通 ----------
@@ -96,6 +97,27 @@ def group_title(m, gid):
 
 # ---------- プロンプト ----------
 
+# アプリは画像を、コードで決めた 縦/横 の比(assets.json の aspect)に引き伸ばして描く。
+# 比が違うと絵がゆがむので、プロンプトで形を指定し、取り込みでも比をそろえる
+def shape_words(aspect):
+    """aspect(縦/横)から、ChatGPTに頼む画像の形と、物の形の言い方を返す。"""
+    if aspect >= 1.6:
+        frame, body = "縦長(1024x1536)", "とても縦長"
+    elif aspect >= 1.15:
+        frame, body = "縦長(1024x1536)", "やや縦長"
+    elif aspect > 0.87:
+        frame, body = "正方形(1024x1024)", "ほぼ正方形"
+    elif aspect > 0.5:
+        frame, body = "横長(1536x1024)", "やや横長"
+    else:
+        frame, body = "横長(1536x1024)", "とても横長"
+    if aspect >= 1:
+        ratio = f"横1に対して縦{aspect:g}"
+    else:
+        ratio = f"縦1に対して横{1 / aspect:.1f}".replace(".0", "")
+    return frame, f"物の形は{body}({ratio}くらい)にする。"
+
+
 def build_prompt(m, sh, c):
     def fill(t):
         return t.replace("{character}", c["character"])
@@ -105,9 +127,12 @@ def build_prompt(m, sh, c):
         parts.append(m["anchor"])
     parts.append(fill(sh["prompt"]))
     n = len(sh["items"])
+    aspect = sh["items"][0].get("aspect", 1.0)
+    frame, body = shape_words(aspect)
     if n == 1:
         if sh["type"] != "icon":
             parts.append("物体をひとつだけ画像の中央に大きく配置し、周囲に十分な余白をとる。")
+            parts.append(body)
     else:
         rows = "、".join(f"{i + 1}行目に{k}個" for i, k in enumerate(sh["layout"]))
         parts.append(
@@ -115,7 +140,7 @@ def build_prompt(m, sh, c):
             "重ねたり接したりしない。左上から右へ、次の行へ、の順に:"
         )
         parts += [f"{i + 1}. {fill(it['desc'])}" for i, it in enumerate(sh["items"])]
-    parts.append(f"画像の形は{sh['size']}。")
+    parts.append(f"画像の形は{'正方形(1024x1024)' if sh['type'] == 'icon' else frame}。")
     parts.append(m["style"])
     parts.append(m["palette"])
     if sh["type"] != "icon":
@@ -246,18 +271,30 @@ def split_items(rgba, layout):
     return crops, None, warns
 
 
-def finalize(crop, target):
-    """余白を足し、長辺を target にそろえる。拡大したら True を返す。"""
-    im = Image.fromarray(crop, "RGBA")
-    w, h = im.size
+def finalize(crop, target, aspect=None, anchor="center"):
+    """余白を足して 縦/横 を aspect にそろえ、長辺を target にする。
+    アプリは画像をコードで決めた比に引き伸ばして描くので、比を合わせておかないと絵がゆがむ。
+    anchor="bottom" の物(地面に立つ物)は下に余白を入れない。アプリが画像の下端を地面に置くため。
+    戻り値: (画像, 拡大したか, 物そのものの 縦/横)"""
+    h, w = crop.shape[:2]
+    own = h / w
     pad = int(max(w, h) * 0.04)
-    canvas = Image.new("RGBA", (w + 2 * pad, h + 2 * pad), (0, 0, 0, 0))
-    canvas.paste(im, (pad, pad))
-    W, H = canvas.size
-    s = target / max(W, H)
-    size = (max(1, round(W * s)), max(1, round(H * s)))
+    top, bottom = pad, (0 if anchor == "bottom" else pad)
+    cw, ch = w + 2 * pad, h + top + bottom
+    if aspect:
+        if ch / cw > aspect:
+            cw = ch / aspect          # 物のほうが縦長 → 左右に余白を足す
+        else:
+            ch = cw * aspect          # 物のほうが横長 → 上(と下)に余白を足す
+    cw, ch = max(1, round(cw)), max(1, round(ch))
+    canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    x = (cw - w) // 2
+    y = ch - bottom - h if anchor == "bottom" else (ch - h) // 2
+    canvas.paste(Image.fromarray(crop, "RGBA"), (x, y))
+    s = target / max(cw, ch)
+    size = (max(1, round(cw * s)), max(1, round(ch * s)))
     out = canvas.convert("RGBa").resize(size, Image.LANCZOS).convert("RGBA")
-    return out, s > 1.6
+    return out, s > 1.6, own
 
 
 def has_halo(img):
@@ -341,22 +378,79 @@ def cmd_prompt(args):
     print("=====")
 
 
+ZIP_MAX_BYTES = 40 * 1024 * 1024   # 展開した1ファイルの上限。これより大きい物は画像ではないとみなす
+
+
+def unpack_zips(inbox):
+    """inbox の zip(ChatGPTでまとめて出した物)を展開して消す。
+    フォルダ構造は捨てて、画像だけを inbox の直下に出す(zip の中のパスは信用しない)。"""
+    import zipfile
+    for z in sorted(inbox.glob("*.zip")):
+        n = 0
+        with zipfile.ZipFile(z) as zf:
+            for info in zf.infolist():
+                name = Path(info.filename).name
+                if info.is_dir() or name.startswith(".") or "__MACOSX" in info.filename:
+                    continue
+                if Path(name).suffix.lower() not in IMG_EXT or info.file_size > ZIP_MAX_BYTES:
+                    print(f"WARN: {z.name} の {info.filename} は画像ではないので取り出しませんでした")
+                    continue
+                dest = inbox / name
+                if dest.exists():
+                    dest = inbox / f"{Path(name).stem}_{z.stem}{Path(name).suffix}"
+                dest.write_bytes(zf.read(info))
+                n += 1
+        z.unlink()
+        print(f"{z.name} から画像を{n}枚取り出しました")
+
+
 def inbox_files(c):
     """inbox の画像をファイル名の順(IMG_0012 < IMG_0103 のような自然順)に返す。
-    git で取得したファイルは更新日時が当てにならないため、名前で並べる。"""
+    git で取得したファイルは更新日時が当てにならないため、名前で並べる。
+    zip があれば先に展開する。"""
     inbox = c["inbox_dir"]
     if not inbox.exists():
         die(f"inbox フォルダがありません: {inbox}(git pull を忘れていないか確認)")
+    unpack_zips(inbox)
     files = [p for p in inbox.iterdir() if p.is_file() and p.suffix.lower() in IMG_EXT]
     if not files:
         die("inbox に画像がありません。GitHubにアップロードしたら git pull してから実行してください。")
     return sorted(files, key=natural_key)
 
 
+def named_sheet(src, m):
+    """ファイル名から素材を決める。素材ID(ref_car)、素材名(car_red)、
+    番号付き(01_car_red, 1-car_red)のどれでもよい。当てはまらなければ None。"""
+    import re
+    stem = re.sub(r"^\d+[_\-. ]*", "", src.stem.lower())
+    stem = re.sub(r"\s*\(\d+\)$", "", stem)        # 同じ名前を保存したときに付く「 (1)」
+    for sh in m["sheets"]:
+        if stem == sh["id"] or stem in (it["name"] for it in sh["items"]):
+            return sh
+    return None
+
+
 def sheet_for_file(src, m, s):
-    """ファイル名が素材ID(例: frog.png)ならその素材。違えば未着手の最初の素材。"""
-    ids = {sh["id"]: sh for sh in m["sheets"]}
-    return ids.get(src.stem.lower()) or next_pending(m, s)
+    """ファイル名が素材なら、その素材。違えば未着手の最初の素材。"""
+    return named_sheet(src, m) or next_pending(m, s)
+
+
+def plan_inbox(files, m, s):
+    """inbox の各ファイルをどの素材として取り込むか決める。
+    名前が素材に当てはまるファイルを先に割り当て、残りのファイルを、
+    まだ誰も取っていない未着手の素材へ、ファイル名の順に割り当てる。
+    戻り値: [(ファイル, 素材 または None, 名前で決まったか)]"""
+    named = {f: named_sheet(f, m) for f in files}
+    taken = {sh["id"] for sh in named.values() if sh}
+    free = [sh for sh in m["sheets"]
+            if s[sh["id"]]["state"] in ("pending", "retry") and sh["id"] not in taken]
+    plan = []
+    for f in files:
+        if named[f]:
+            plan.append((f, named[f], True))
+        else:
+            plan.append((f, free.pop(0) if free else None, False))
+    return plan
 
 
 def archive(src, c, sh):
@@ -385,11 +479,15 @@ def cmd_ingest(args):
     s = load_status(m)
     files = inbox_files(c)
     if args.all:
-        for src in files:
-            sh = sheet_for_file(src, m, s)
+        plan = plan_inbox(files, m, s)
+        # 名前で決まった物を先に取り込む(名前の無い物が、その素材を先に取らないように)
+        for src, sh, by_name in sorted(plan, key=lambda x: not x[2]):
             if sh is None:
-                print(f"WARN: 未着手の素材がもうありません。{src.name} は取り込みませんでした")
-                break
+                print(f"WARN: 割り当てる素材がありません。{src.name} は取り込みませんでした")
+                continue
+            if not by_name:
+                print(f"WARN: {src.name} は名前が素材に当てはまらないので、順番で {sh['id']} にしました。"
+                      "プレビューで絵が合っているか必ず確かめてください")
             process_one(src, sh, c, m, s)
             print()
         return
@@ -451,13 +549,18 @@ def process_one(src, sh, c, m, s):
 
     pairs = []
     for item, crop in zip(sh["items"], crops):
-        out, upscaled = finalize(crop, item["target"])
+        aspect = item.get("aspect")
+        out, upscaled, own = finalize(crop, item["target"], aspect, item.get("anchor", "center"))
         rel = Path("assets/img") / item["dir"] / f"{item['name']}.webp"
         save_both(out, rel, c, "WEBP", quality=c["webp_quality"], method=6)
         pairs.append((item["name"], out))
         print(f"  OK {item['name']:<18} -> {rel.as_posix()} ({out.width}x{out.height})")
         if upscaled:
             warns.append(f"{item['name']} は元が小さく、拡大しています(ぼやける可能性)")
+        if aspect and not (1 / ASPECT_TOLERANCE <= own / aspect <= ASPECT_TOLERANCE):
+            warns.append(
+                f"{item['name']} の形(縦/横 {own:.2f})がアプリの比({aspect:g})と大きく違います。"
+                "余白で合わせたので、アプリでは小さめに見えます。気になれば追記「形の比が違う」で作り直し")
         if has_halo(out):
             warns.append(f"{item['name']} のふちにピンクのにじみがあります")
     for w in warns:
@@ -543,6 +646,316 @@ def cmd_preview_all(args):
     print(f"一覧: {out.relative_to(c['repo_dir'])}({len(pairs)}点)")
 
 
+# ---------- ChatGPT で「次」を送るだけで続けて描かせる ----------
+# 1点ずつプロンプトを貼るのは手間なので、決まりとリストを最初に1回だけ渡し、
+# あとは「次」と送るだけで、ChatGPTがリストの順に1枚ずつ描くようにする。
+# 長い会話では最初の指示を忘れやすいので、リストはいくつかに分けて渡す
+
+PART_SIZE = 16
+
+
+def list_line(no, sh, c, filename=False):
+    """リストの1行。番号、名前(filename なら保存するファイル名)、画像の形、描く物、物の形。"""
+    # 一覧で渡すときは、見本の車を番号で指す
+    fill = lambda t: (t.replace("{character}", c["character"])
+                      .replace("最初に採用した赤い車", "1番の赤い車").replace("採用した赤い車", "1番の赤い車"))
+    it = sh["items"][0]
+    if sh["type"] == "icon":
+        frame, body = "正方形(1024x1024)", "この絵だけは背景を透明にせず、画像全体を塗りつぶす。"
+    else:
+        frame, body = shape_words(it.get("aspect", 1.0))
+    label = f"{it['name']}.png" if filename else it["name"]
+    return f"{no}. {label}【画像の形: {frame}】{fill(sh['prompt'])} {body}"
+
+
+ZIP_LIMIT_MB = 20   # GitHub のブラウザからのアップロードは1ファイル25MBまで。余裕をみて20MB
+
+
+def auto_text(m, c, todo):
+    """待たずに続けて描き、最後にファイル名をつけて zip にまとめてもらう文。"""
+    lines = [
+        "これから、1〜2歳の子ども向けアプリで使う絵を、下のリストの順に全部描いてもらいます。",
+        "",
+        "【進め方】",
+        "- 1番の赤い車は全部の絵の見本なので、1番だけは描いたら止まって、私の確認を待つ。"
+        "私が「OK」と送ったら、2番から最後まで続ける。",
+        "- 2番からは、1枚描いたら私の返事を待たずに、そのまま次の番号を描く。リストの最後まで続ける。",
+        "- 1回の返事で続けて描けない場合は、描けるところまで描いて止まってよい。"
+        "私が「続けて」と送ったら、続きの番号から再開する。",
+        "- 描くたびに、絵の下の文章に「番号. ファイル名」だけ書く(例: 3. car_yellow.png)。絵の中には文字を入れない。",
+        "- 1枚の絵に描く物は、指定した物1つだけ。画像の中央に大きく描き、周りに十分な余白をとる。",
+        "- 私が「◯番をやり直し」と送ったら、その番号だけ描き直す。注文が書いてあれば、それに合わせて直す。",
+        "",
+        "【すべての絵に共通の決まり】",
+        m["style"],
+        m["palette"],
+        m["background"],
+        "- 1番の赤い車が、全部の絵の見本。ほかの絵は、1番の車と同じタッチ・塗り方・丸み・色の明るさで描く。",
+        "- 画像の形(正方形・縦長・横長)と物の形は、番号ごとの指定に合わせる。",
+        "",
+        "【全部描き終えたら】",
+        "- 描いた画像を、リストのファイル名(例: car_red.png)でPNGとして保存し、zipファイルにまとめてダウンロードできるようにする。"
+        "やり直した番号は、最後に描いた物を使う。",
+        f"- zipは1つ{ZIP_LIMIT_MB}MB以下にする。超える場合は assets_1.zip、assets_2.zip のように分ける。",
+        "- zipが作れない場合は、そう伝える(そのときは私が1枚ずつ保存する)。",
+        "",
+        "【リスト】",
+    ]
+    if todo[0][0] != 1:
+        lines = [ln for ln in lines if not ln.startswith("- 1番の赤い車は全部の絵の見本なので")]
+        lines = [ln.replace("- 2番からは、1枚描いたら", "- 1枚描いたら") for ln in lines]
+    lines += [list_line(no, sh, c, filename=True) for no, sh in todo]
+    lines += ["", f"では、{todo[0][0]}番から描いてください。"]
+    return "\n".join(lines)
+
+
+# ---------- ChatGPT 側のスキル(生成 → 完了を確かめる → 次を生成 のループ) ----------
+# ChatGPT のスキルは Claude と同じ形式(SKILL.md のフォルダ)。zip にしてユーザーが ChatGPT に登録する。
+# スキルが使えない場合も、同じ中身をプロジェクトやマイGPTの指示として使える
+
+CHATGPT_SKILL_NAME = "drive-app-images"
+
+
+def chatgpt_skill_md(m):
+    return "\n".join([
+        "---",
+        f"name: {CHATGPT_SKILL_NAME}",
+        "description: 1〜2歳向けドライブアプリの絵(47点)を、references/list.md の順に1枚ずつ生成し、"
+        "1枚できるたびに完了を確かめて次へ進むループを、最後まで回す。「素材を作って」「絵を作って」"
+        "「続けて」「◯番をやり直し」と言われたら必ずこのスキルを使う。",
+        "---",
+        "",
+        "# ドライブアプリの絵を、順番に最後まで作る",
+        "",
+        "references/list.md に、描く絵が番号順に並んでいる。1番から最後まで、次のループで1枚ずつ作る。",
+        "",
+        "## ループ(必ずこの順で)",
+        "",
+        "1. **始める**: references/list.md を読み、進み具合の表(番号・ファイル名・状態)を作る。"
+        "「続けて」と言われたときは、まだ完了していない最初の番号から始める。",
+        "2. **生成**: その番号の絵を、画像生成で1枚だけ作る。1回の画像生成で描く物は1つだけ。"
+        "リストの「画像の形」と「物の形」、下の「共通の決まり」を必ず守る。",
+        "3. **完了を確かめる**: 画像が最後まで生成されて表示されたことを確かめる。"
+        "失敗した・途中で止まった・物が2つ以上描かれた・文字が入った場合は、同じ番号をもう一度生成する(2回まで)。"
+        "それでもだめなら「◯番: 作れませんでした」と書いて次へ進む。",
+        "4. **記録**: 画像の下に「✅ 番号. ファイル名」とだけ書き、進み具合の表の状態を「完了」にする。"
+        "画像の中には文字を入れない。",
+        "5. **次へ**: ユーザーの返事を待たずに、次の番号で 2 に戻る。最後の番号まで続ける。",
+        "   - **例外: 1番(赤い車)は全部の絵の見本なので、1番だけは完了したら止まり、ユーザーの「OK」を待つ。**"
+        "「やり直し」と言われたら、注文に合わせて1番を作り直す。",
+        "6. **続けられなくなったら**: 1回の返事で生成を続けられなくなったら、"
+        "「◯番まで完了しました。『続けて』と送ると◯番から再開します」と書いて止まる。",
+        "7. **全部できたら**: 各番号の最後に作った画像を、リストのファイル名(例: car_red.png)のPNGにし、"
+        f"zipファイルにまとめてダウンロードできるようにする。zipは1つ{ZIP_LIMIT_MB}MB以下"
+        "(超えるときは assets_1.zip、assets_2.zip と分ける)。zipが作れない場合はそう伝える。",
+        "",
+        "## やり直し",
+        "",
+        "- 「◯番をやり直し(注文)」と言われたら、その番号だけ注文に合わせて作り直し、その番号を最新の画像に置き換える。",
+        "- やり直したあとは、止まる前に作っていた番号の続きに戻る。",
+        "",
+        "## 共通の決まり(すべての絵)",
+        "",
+        m["style"],
+        "",
+        m["palette"],
+        "",
+        m["background"],
+        "",
+        "- 1番の赤い車が、全部の絵の見本。ほかの絵は、1番の車と同じタッチ・塗り方・丸み・色の明るさで描く。",
+        "- 物は画像の中央に大きく1つだけ描き、周りに十分な余白をとる。地面・背景の風景・ほかの物は描かない"
+        "(リストに書いてある物は除く)。",
+        "- 画像の形(正方形・縦長・横長)と物の形は、番号ごとの指定に合わせる。",
+        "",
+    ])
+
+
+def chatgpt_skill_list(m, c):
+    lines = ["# 描く絵のリスト", "",
+             "番号の順に描く。ファイル名は、zipにまとめるときの名前。", ""]
+    for no, sh in enumerate(m["sheets"], start=1):
+        lines.append(list_line(no, sh, c, filename=True))
+        lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_chatgpt_skill(args):
+    """ChatGPT に登録するスキル(フォルダと zip)を作る。"""
+    import zipfile
+    c = load_config()
+    m = load_manifest()
+    out = Path(args.out).resolve()
+    root = out / CHATGPT_SKILL_NAME
+    (root / "references").mkdir(parents=True, exist_ok=True)
+    (root / "SKILL.md").write_text(chatgpt_skill_md(m), encoding="utf-8")
+    (root / "references" / "list.md").write_text(chatgpt_skill_list(m, c), encoding="utf-8")
+    z = out / f"{CHATGPT_SKILL_NAME}.zip"
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(root.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(out).as_posix())
+    print(f"スキルのフォルダ: {root}")
+    print(f"登録用のzip: {z}({z.stat().st_size} バイト)")
+
+
+def cmd_chatgpt_list(args):
+    c = load_config()
+    m = load_manifest()
+    s = load_status(m)
+    numbered = list(enumerate(m["sheets"], start=1))
+    todo = [(no, sh) for no, sh in numbered if s[sh["id"]]["state"] in ("pending", "retry")]
+    if not todo:
+        print("未着手の素材はありません。")
+        return
+    if args.auto:
+        text = auto_text(m, c, todo)
+        print(f"===== ChatGPTに貼る文(続けて描いて zip にまとめる版、{len(todo)}点、{len(text)}文字) =====")
+        print(text)
+        print("=====")
+        return
+    parts = [todo[i:i + PART_SIZE] for i in range(0, len(todo), PART_SIZE)]
+    k = args.part or 1
+    if not 1 <= k <= len(parts):
+        die(f"part は 1〜{len(parts)} です")
+    chunk = parts[k - 1]
+    first = chunk[0][0] == 1
+    lines = []
+    if first:
+        lines.append("これから、1〜2歳の子ども向けアプリで使う絵を、1枚ずつ描いてもらいます。")
+    else:
+        lines.append("続きのリストです。進め方と決まりは前と同じです。念のためもう一度書きます。")
+    lines += [
+        "",
+        "【進め方】",
+        "- 1回の返事で描く絵は1枚だけ。リストを上から順に描く。",
+        "- 私が「次」と送ったら、リストの次の番号を描く。",
+        "- 私が「やり直し」と送ったら、同じ番号をもう一度描く。注文が書いてあれば、それに合わせて直す。",
+        "- 描いたら、絵の下の文章に「番号. 名前」だけ書く(例: 3. car_yellow)。絵の中には文字を入れない。",
+        "- 1枚の絵に描く物は、指定した物1つだけ。画像の中央に大きく描き、周りに十分な余白をとる。",
+        "",
+        "【すべての絵に共通の決まり】",
+        m["style"],
+        m["palette"],
+        m["background"],
+        "- 1番の赤い車が、全部の絵の見本。ほかの絵は、1番の車と同じタッチ・塗り方・丸み・色の明るさで描く。",
+        "- 画像の形(正方形・縦長・横長)と物の形は、番号ごとの指定に合わせる。",
+        "",
+        f"【リスト(その{k} / 全{len(parts)})】",
+    ]
+    lines += [list_line(no, sh, c) for no, sh in chunk]
+    lines += ["", f"では、{chunk[0][0]}番を描いてください。"]
+    text = "\n".join(lines)
+    print(f"===== ChatGPTに貼る文(その{k} / 全{len(parts)}、{len(chunk)}点、{len(text)}文字) =====")
+    print(text)
+    print("=====")
+    if k < len(parts):
+        print(f"このリストを描き終えたら: chatgpt-list --part {k + 1}")
+
+
+def cmd_inbox_preview(_):
+    """inbox の画像を1枚の一覧にする。取り込む前に、どの絵がどの素材かを見て確かめるため。
+    ファイル名を素材ID(例: frog.png)に変えておけば、ingest --all は名前どおりに取り込む。"""
+    c = load_config()
+    m = load_manifest()
+    s = load_status(m)
+    files = inbox_files(c)
+    pairs = []
+    print("番号  ファイル名 -> このまま ingest --all したときの割り当て")
+    for i, (f, sh, by_name) in enumerate(plan_inbox(files, m, s), start=1):
+        if sh is None:
+            guess = "(割り当てなし)"
+        else:
+            guess = sh["id"] + ("(名前どおり)" if by_name else "(順番で。名前が当てはまらない)")
+        print(f"{i:>3}  {f.name} -> {guess}")
+        im = Image.open(f)
+        im.thumbnail((400, 400))
+        pairs.append((f"{i}: {f.name}", im.convert("RGBA")))
+    out = make_preview(pairs, c["preview_dir"] / "inbox.png", per_row=4)
+    print(f"一覧: {out.relative_to(c['repo_dir'])}")
+
+
+# ---------- アプリのコードとの照合 ----------
+
+# コードが正方形(幅=高さ)で描く素材。比の書き方がほかと違うので、ここに書いておく
+#   自車: player.js drawCar が size×size で描く / おやすみ: ending.js が size×size で描く
+CODE_SQUARE = {"car_red", "car_blue", "car_yellow", "car_white", "goodnight"}
+
+
+def code_catalog(repo):
+    """js/assets.js の CATALOG から 素材名 -> 保存先フォルダ を読む。"""
+    import re
+    src = (repo / "js" / "assets.js").read_text(encoding="utf-8")
+    return dict(re.findall(r"^\s*(\w+): \{ dir: '(\w+)'", src, re.M))
+
+
+def code_aspects(repo):
+    """js/ の中から、素材ごとの 縦/横 の比を集める。同じ素材に違う比があれば全部返す。"""
+    import re
+    found = {}
+
+    def add(name, val, where):
+        found.setdefault(name, set()).add((round(float(val), 4), where))
+
+    for js in sorted((repo / "js").glob("*.js")):
+        src = js.read_text(encoding="utf-8")
+        # scenery.js: tree_round: { size: 0.55, aspect: 1.15 } / cloud: { width: 0.16, aspect: 0.42 }
+        for name, val in re.findall(r"^\s*(\w+): \{ (?:size|width): [\d.]+, aspect: ([\d.]+) \}", src, re.M):
+            add(name, val, js.name)
+        # obstacles.js / crossing.js / animals.js: { name: 'frog', size: 0.10, aspect: 0.95 }
+        for name, val in re.findall(r"\{ name: '(\w+)'[^}]*?aspect: ([\d.]+)", src):
+            add(name, val, js.name)
+        # crossing.js: const TRAIN = { ..., aspect: 0.42 } / ending.js: const GARAGE = { ..., aspect: 0.55 }
+        for const, name in (("TRAIN", "train"), ("GARAGE", "garage")):
+            mm = re.search(rf"const {const} = \{{[^}}]*aspect: ([\d.]+)", src)
+            if mm:
+                add(name, mm.group(1), js.name)
+    for name in CODE_SQUARE:
+        add(name, 1.0, "正方形で描く")
+    return found
+
+
+def cmd_sync_check(_):
+    """assets.json とアプリのコード(js/)が合っているか確かめる。
+    素材の名前・保存先・縦横の比がずれていたら知らせる。コードを変えたあとに必ず実行する。"""
+    c = load_config()
+    m = load_manifest()
+    repo = c["repo_dir"]
+    catalog = code_catalog(repo)
+    aspects = code_aspects(repo)
+    items = {it["name"]: it for sh in m["sheets"] if sh["type"] != "icon" for it in sh["items"]}
+    problems = []
+
+    for name, d in sorted(catalog.items()):
+        if name not in items:
+            problems.append(f"コードにあるのに assets.json に無い: {name}(assets/img/{d}/)")
+        elif items[name]["dir"] != d:
+            problems.append(f"保存先が違う: {name} コード={d} / assets.json={items[name]['dir']}")
+    for name in sorted(items):
+        if name not in catalog:
+            problems.append(f"assets.json にあるのにコード(assets.js の CATALOG)に無い: {name}")
+
+    for name, it in sorted(items.items()):
+        vals = aspects.get(name)
+        if not vals:
+            problems.append(f"コードの中に {name} の縦横比が見つからない")
+            continue
+        nums = {v for v, _ in vals}
+        if len(nums) > 1:
+            where = "、".join(f"{w}={v:g}" for v, w in sorted(vals, key=lambda x: x[1]))
+            problems.append(f"コードの中で {name} の縦横比が場所によって違う: {where}")
+        code = next(iter(nums)) if len(nums) == 1 else None
+        if code is not None and abs(code - it.get("aspect", 0)) > 1e-3:
+            problems.append(f"縦横比が違う: {name} コード={code:g} / assets.json={it.get('aspect')}")
+
+    print(f"コードの素材 {len(catalog)} 点 / assets.json の素材 {len(items)} 点(アイコン除く)")
+    if problems:
+        for p in problems:
+            print(f"  NG {p}")
+        print("assets.json を直してから素材づくりを進めてください。")
+        sys.exit(1)
+    print("すべて合っています。")
+
+
 def main():
     ap = argparse.ArgumentParser(description="GPT素材生成ループ")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -554,6 +967,13 @@ def main():
     p = sub.add_parser("reset"); p.add_argument("sheet"); p.set_defaults(fn=cmd_reset)
     sub.add_parser("check").set_defaults(fn=cmd_check)
     p = sub.add_parser("preview-all"); p.add_argument("--group"); p.set_defaults(fn=cmd_preview_all)
+    sub.add_parser("sync-check").set_defaults(fn=cmd_sync_check)
+    p = sub.add_parser("chatgpt-list"); p.add_argument("--part", type=int)
+    p.add_argument("--auto", action="store_true", help="待たずに続けて描き、最後に zip にまとめてもらう文")
+    p.set_defaults(fn=cmd_chatgpt_list)
+    sub.add_parser("inbox-preview").set_defaults(fn=cmd_inbox_preview)
+    p = sub.add_parser("chatgpt-skill"); p.add_argument("--out", required=True)
+    p.set_defaults(fn=cmd_chatgpt_skill)
     args = ap.parse_args()
     args.fn(args)
 
