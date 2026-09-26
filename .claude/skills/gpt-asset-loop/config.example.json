@@ -1,6 +1,4 @@
 {
   "character": "丸い耳の小さな動物(特定の動物キャラに似せないオリジナル)",
-  "webp_quality": 88,
-  "image_model": "gpt-image-1",
-  "image_quality": "medium"
+  "webp_quality": 88
 }

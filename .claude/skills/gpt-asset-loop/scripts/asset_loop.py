@@ -53,9 +53,6 @@ def load_config():
     c["src_dir"] = c["repo_dir"] / "assets-src"
     c["preview_dir"] = c["src_dir"] / "preview"
     c.setdefault("webp_quality", 88)
-    c.setdefault("api_base", API_BASE_DEFAULT)
-    c.setdefault("image_model", "gpt-image-1")
-    c.setdefault("image_quality", "medium")
     c.setdefault("character", "丸い耳の小さな動物(特定の動物キャラに似せないオリジナル)")
     return c
 
@@ -121,28 +118,13 @@ def shape_words(aspect):
     return frame, f"物の形は{body}({ratio}くらい)にする。"
 
 
-# API で作るときは、会話の記憶が無いので、採用した赤い車の画像を毎回添付する。
-# 添付した画像をそのまま描き直されないよう、「見本」であることをはっきり書く
-API_ANCHOR = ("添付した赤い車の画像は絵柄の見本。塗り方・丸み・色の明るさ・やわらかさを見本にそろえる。"
-              "見本の車そのものは描かず、下に書いた物だけを新しく1つ描く。")
-API_ANCHOR_CAR = "添付した赤い車の画像を元に描く。"   # 車の色違いとアイコンは車そのものを使う
-API_REFS_NOTE = "2枚目以降に添付した画像は、デザインをそろえる相手。"
-
-
-def build_prompt(m, sh, c, api=False):
+def build_prompt(m, sh, c):
     def fill(t):
         return t.replace("{character}", c["character"])
 
     parts = []
     if sh["type"] != "reference":
-        if not api:
-            parts.append(m["anchor"])
-        elif sh["group"] in ("cars", "icon"):
-            parts.append(API_ANCHOR_CAR)
-        else:
-            parts.append(API_ANCHOR)
-        if api and sh.get("refs"):
-            parts.append(API_REFS_NOTE)
+        parts.append(m["anchor"])
     parts.append(fill(sh["prompt"]))
     n = len(sh["items"])
     aspect = sh["items"][0].get("aspect", 1.0)
@@ -603,177 +585,6 @@ def cmd_preview_all(args):
     print(f"一覧: {out.relative_to(c['repo_dir'])}({len(pairs)}点)")
 
 
-# ---------- 自動生成(OpenAI の画像API) ----------
-# APIキーは環境変数 OPENAI_API_KEY からだけ読む。ファイルにもログにも書かない。
-# リポジトリは公開なので、キーをリポジトリやチャットに置かないこと(SKILL.md)
-
-API_BASE_DEFAULT = "https://api.openai.com/v1"
-API_RETRY = 3                  # 混雑(429)やサーバーの不調(5xx)のときに試し直す回数
-API_TIMEOUT = 300              # 1枚の生成を待つ秒数
-
-
-def api_size(aspect, icon=False):
-    """shape_words と同じしきい値で、APIに頼む画像の大きさを決める。"""
-    if icon:
-        return "1024x1024"
-    if aspect >= 1.15:
-        return "1024x1536"
-    if aspect > 0.87:
-        return "1024x1024"
-    return "1536x1024"
-
-
-def multipart(fields, files):
-    """multipart/form-data を組み立てる(標準ライブラリだけで送るため)。"""
-    import uuid
-    boundary = uuid.uuid4().hex
-    out = []
-    for k, v in fields.items():
-        out.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
-    for k, (fname, data) in files:
-        out.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"; filename="{fname}"\r\n'
-            "Content-Type: image/png\r\n\r\n".encode() + data + b"\r\n")
-    out.append(f"--{boundary}--\r\n".encode())
-    return b"".join(out), f"multipart/form-data; boundary={boundary}"
-
-
-def png_bytes(path):
-    """見本画像をPNGのバイト列にする(WebPの素材もPNGにして送る)。"""
-    import io
-    buf = io.BytesIO()
-    Image.open(path).convert("RGBA").save(buf, "PNG")
-    return buf.getvalue()
-
-
-def api_request(c, path, body, ctype):
-    """APIに送り、JSONを返す。失敗したら (None, 理由)。キーは表示しない。"""
-    import os
-    import ssl
-    import time
-    import urllib.error
-    import urllib.request
-    key = os.environ.get("OPENAI_API_KEY")
-    if not key:
-        return None, "環境変数 OPENAI_API_KEY がありません(クラウド環境の設定で登録し、新しいセッションで開き直す)"
-    url = c["api_base"].rstrip("/") + path
-    cafile = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-    ctx = ssl.create_default_context(cafile=cafile) if url.startswith("https") else None
-    for attempt in range(API_RETRY + 1):
-        req = urllib.request.Request(url, data=body, method="POST", headers={
-            "Authorization": f"Bearer {key}", "Content-Type": ctype})
-        try:
-            with urllib.request.urlopen(req, timeout=API_TIMEOUT, context=ctx) as res:
-                return json.loads(res.read()), None
-        except urllib.error.HTTPError as e:
-            try:
-                msg = json.loads(e.read()).get("error", {}).get("message", "")
-            except Exception:
-                msg = ""
-            if (e.code == 429 or e.code >= 500) and attempt < API_RETRY:
-                wait = 5 * (2 ** attempt)
-                print(f"  API {e.code}。{wait}秒待って試し直します")
-                time.sleep(wait)
-                continue
-            return None, f"API {e.code}: {msg}"
-        except urllib.error.URLError as e:
-            return None, (f"APIにつながりません({e.reason})。"
-                          "クラウド環境のネットワーク設定で api.openai.com を許可してください")
-    return None, "試し直しても失敗しました"
-
-
-def generate_one(sh, c, m, s, note=None, dry=False):
-    """1点をAPIで作り、inbox に置いてから、手作業のときと同じ取り込みにかける。"""
-    import base64
-    import time
-    aspect = sh["items"][0].get("aspect", 1.0)
-    prompt = build_prompt(m, sh, c, api=True)
-    if note:
-        prompt += "\n" + note
-    fields = {
-        "model": c["image_model"],
-        "prompt": prompt,
-        "size": api_size(aspect, sh["type"] == "icon"),
-        "quality": c["image_quality"],
-        "background": "opaque" if sh["type"] == "icon" else "transparent",
-    }
-    refs = []
-    if sh["type"] != "reference":
-        ref = c["src_dir"] / "reference" / "style_reference.png"
-        if not ref.exists():
-            return "基準の車(ref_car)がまだ採用されていません。先に ref_car を作って approve してください"
-        refs.append(("style_reference.png", ref))
-        for name in sh.get("refs", []):
-            it = next(i for x in m["sheets"] for i in x["items"] if i["name"] == name)
-            p = c["repo_dir"] / "assets" / "img" / it["dir"] / f"{name}.webp"
-            if not p.exists():
-                return f"デザインをそろえる相手 {name} がまだありません。先に作ってください"
-            refs.append((f"{name}.png", p))
-
-    print(f"生成: {sh['id']}({sh['title']}) {fields['size']} 品質={fields['quality']}"
-          + (f" 見本={', '.join(n for n, _ in refs)}" if refs else ""))
-    if dry:
-        print(prompt)
-        return None
-    t0 = time.time()
-    if refs:
-        body, ctype = multipart(fields, [("image[]", (n, png_bytes(p))) for n, p in refs])
-        res, err = api_request(c, "/images/edits", body, ctype)
-    else:
-        res, err = api_request(c, "/images/generations", json.dumps(fields).encode(), "application/json")
-    if err:
-        return err
-    try:
-        data = base64.b64decode(res["data"][0]["b64_json"])
-    except (KeyError, IndexError, TypeError):
-        return "APIの返事に画像が入っていませんでした"
-    c["inbox_dir"].mkdir(parents=True, exist_ok=True)
-    src = c["inbox_dir"] / f"{sh['id']}.png"
-    src.write_bytes(data)
-    print(f"  {time.time() - t0:.0f}秒でできました")
-    process_one(src, sh, c, m, s)
-    return None
-
-
-def cmd_generate(args):
-    """APIで素材を作って取り込む。1点、グループ、または未着手の全部。"""
-    c = load_config()
-    m = load_manifest()
-    s = load_status(m)
-    if args.sheet:
-        targets = [find_sheet(m, args.sheet)]
-        st = s[targets[0]["id"]]["state"]
-        if st in ("review", "done") and not args.force:
-            die(f"{args.sheet} はもう取り込み済みです(状態: {st})。作り直すなら --force を付けてください")
-    else:
-        if not args.group and not args.all:
-            die("素材ID、--group <グループID>、--all のどれかを指定してください")
-        if s["ref_car"]["state"] != "done" and not args.dry_run:
-            die("先に基準の車(ref_car)を作り、ユーザーに確かめてもらってから approve してください")
-        targets = [sh for sh in m["sheets"]
-                   if s[sh["id"]]["state"] in ("pending", "retry")
-                   and (args.all or sh["group"] == args.group)]
-        if args.limit:
-            targets = targets[:args.limit]
-    if not targets:
-        print("作る素材がありません。")
-        return
-    print(f"{len(targets)} 点を作ります(モデル {c['image_model']})\n")
-    failed = []
-    for sh in targets:
-        err = generate_one(sh, c, m, s, note=args.note, dry=args.dry_run)
-        if err:
-            print(f"NG: {sh['id']}: {err}")
-            failed.append(sh["id"])
-            # キーやネットワークの問題なら、残りを続けても同じなので止める
-            if "OPENAI_API_KEY" in err or "つながりません" in err or "API 401" in err or "API 403" in err:
-                break
-        print()
-    done = len(targets) - len(failed)
-    print(f"できた: {done} 点 / うまくいかなかった: {len(failed)} 点"
-          + (f"({', '.join(failed)})" if failed else ""))
-
-
 # ---------- アプリのコードとの照合 ----------
 
 # コードが正方形(幅=高さ)で描く素材。比の書き方がほかと違うので、ここに書いておく
@@ -856,14 +667,6 @@ def cmd_sync_check(_):
     print("すべて合っています。")
 
 
-def refuse_key_in_files():
-    """リポジトリは公開なので、キーをファイルに書かせない。環境変数 OPENAI_API_KEY だけを使う。
-    どのコマンドでも最初に確かめる。"""
-    if CONFIG.exists() and "sk-" in CONFIG.read_text(encoding="utf-8"):
-        die("config.json にAPIキーのような値があります。すぐ消してください(コミットしないこと)。"
-            "キーはクラウド環境の設定の環境変数 OPENAI_API_KEY にだけ置きます。")
-
-
 def main():
     ap = argparse.ArgumentParser(description="GPT素材生成ループ")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -876,17 +679,7 @@ def main():
     sub.add_parser("check").set_defaults(fn=cmd_check)
     p = sub.add_parser("preview-all"); p.add_argument("--group"); p.set_defaults(fn=cmd_preview_all)
     sub.add_parser("sync-check").set_defaults(fn=cmd_sync_check)
-    p = sub.add_parser("generate")
-    p.add_argument("sheet", nargs="?")
-    p.add_argument("--group")
-    p.add_argument("--all", action="store_true")
-    p.add_argument("--limit", type=int)
-    p.add_argument("--note", help="プロンプトの最後に足す文(作り直し用の追記)")
-    p.add_argument("--force", action="store_true", help="取り込み済みの素材を作り直す")
-    p.add_argument("--dry-run", action="store_true", help="送らずに、送る内容だけ表示する")
-    p.set_defaults(fn=cmd_generate)
     args = ap.parse_args()
-    refuse_key_in_files()
     args.fn(args)
 
 
